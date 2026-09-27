@@ -61,6 +61,7 @@ export default function PrivacyPage() {
       <h2>4. Who else sees it</h2>
       <ul>
         <li>App makers — only what you send to their app, and your name and email only if you chose to share them.</li>
+        <li>People who edit an app with you — your name, and what you select and where your pointer is while you both have it open (this isn&apos;t stored).</li>
         <li>
           Our service providers, who work under contract and only on our instructions: <Fill value="" label="hosting provider and where data is stored" />
           {process.env.RESEND_API_KEY ? "; Resend, which sends our emails" : ""}.

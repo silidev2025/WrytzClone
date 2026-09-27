@@ -20,6 +20,7 @@ import {
 import { DEFAULT_LAYOUT, ELEMENT_INFO, defaultFontSize, instantiateSpec, isAutoLayout, isContainerType, type ElementSpec } from "@/lib/shared/elements";
 import { applyMobileRects, frameWidthFor, freeChildBoxes, isHugHeight, isMobileApp, mobileFontSize, resetMobileLayout } from "@/lib/shared/layout";
 import { deepClone, uid, uniqueName } from "@/lib/shared/util";
+import { applyChanges, diffDocs, type Change } from "@/lib/shared/sync";
 
 export type LeftTab = "add" | "text" | "blocks" | "media" | "layers" | "pages" | "theme" | "data";
 export type RightTab = "design" | "content" | "events" | "data";
@@ -34,6 +35,28 @@ export interface Guide {
 
 export type SaveState = "saved" | "dirty" | "saving" | "error" | "conflict";
 
+/** One undo step: the units it changed, before and after (so undo never touches other people's work). */
+export interface HistoryEntry {
+  undo: Change[];
+  redo: Change[];
+}
+
+/** Someone else with this app open (live collaboration). */
+export interface Peer {
+  clientId: string;
+  userId: string;
+  name: string;
+  color: string;
+  pageId: string | null;
+  view: "design" | "database";
+  bp: "desktop" | "mobile";
+  selection: string[];
+  cursor: { x: number; y: number } | null;
+  at: number;
+}
+
+export type LiveStatus = "connecting" | "live" | "offline";
+
 interface ClipboardData {
   els: El[];
 }
@@ -44,6 +67,13 @@ export interface EditorState {
   revision: number;
   collections: Collection[];
   user: PublicUser;
+  /** owner: everything; editor: design and data, not sharing or deleting the app */
+  role: "owner" | "editor";
+  peers: Record<string, Peer>;
+  live: LiveStatus;
+  /** bumped when someone else changed records or collections */
+  liveDataVersion: number;
+  liveDataCollection: string | null;
 
   pageId: string;
   bp: Breakpoint;
@@ -64,8 +94,8 @@ export interface EditorState {
   marquee: { x: number; y: number; w: number; h: number } | null;
   tabsShown: Record<string, number>;
 
-  past: AppDoc[];
-  future: AppDoc[];
+  past: HistoryEntry[];
+  future: HistoryEntry[];
   gesture: number;
   gestureChanged: boolean;
 
@@ -84,6 +114,7 @@ export interface EditorInit {
   revision: number;
   collections: Collection[];
   user: PublicUser;
+  role?: "owner" | "editor";
 }
 
 export const useEditor = create<EditorState>(() => ({}) as EditorState);
@@ -96,6 +127,11 @@ export function initEditor(init: EditorInit) {
       revision: init.revision,
       collections: init.collections,
       user: init.user,
+      role: init.role ?? "owner",
+      peers: {},
+      live: "connecting",
+      liveDataVersion: 0,
+      liveDataCollection: null,
       pageId: init.doc.homePageId,
       bp: "desktop",
       zoom: 0.6,
@@ -165,6 +201,12 @@ export function inFreeParent(page: Page, el: El): boolean {
 
 type Recipe = (doc: Draft<AppDoc>, page: Draft<Page>) => void;
 
+// what the current gesture started from, and which units it changed
+let gestureStart: AppDoc | null = null;
+let gestureKeys = new Set<string>();
+
+const dirtyState = (s: EditorState): SaveState => (s.saveState === "conflict" ? "conflict" : "dirty");
+
 /**
  * Change the document. Outside a gesture every call is one undo step; inside a gesture
  * (a drag, a slider) the whole gesture becomes one step.
@@ -177,33 +219,39 @@ export function mutate(recipe: Recipe, opts: { history?: boolean } = {}) {
   });
   if (next === s.doc) return;
   const record = opts.history !== false;
-  if (record && s.gesture === 0) {
-    useEditor.setState({
-      doc: next,
-      past: [...s.past.slice(-HISTORY_LIMIT + 1), s.doc],
-      future: [],
-      saveState: s.saveState === "conflict" ? "conflict" : "dirty",
-    });
+  if (s.gesture > 0) {
+    if (record) for (const c of diffDocs(s.doc, next)) gestureKeys.add(c.k);
+    useEditor.setState({ doc: next, gestureChanged: true, saveState: dirtyState(s) });
+  } else if (record) {
+    const entry: HistoryEntry = { undo: diffDocs(next, s.doc), redo: diffDocs(s.doc, next) };
+    useEditor.setState({ doc: next, past: [...s.past.slice(-HISTORY_LIMIT + 1), entry], future: [], saveState: dirtyState(s) });
   } else {
-    useEditor.setState({ doc: next, gestureChanged: s.gesture > 0 ? true : s.gestureChanged, saveState: s.saveState === "conflict" ? "conflict" : "dirty" });
+    useEditor.setState({ doc: next, saveState: dirtyState(s) });
   }
 }
 
 /** Group every change until endGesture() into one undo step. */
 export function beginGesture() {
   const s = ed();
-  if (s.gesture === 0) useEditor.setState({ gesture: 1, gestureChanged: false, past: [...s.past.slice(-HISTORY_LIMIT + 1), s.doc], future: [] });
-  else useEditor.setState({ gesture: s.gesture + 1 });
+  if (s.gesture === 0) {
+    gestureStart = s.doc;
+    gestureKeys = new Set();
+    useEditor.setState({ gesture: 1, gestureChanged: false });
+  } else useEditor.setState({ gesture: s.gesture + 1 });
 }
 
 export function endGesture() {
   const s = ed();
   if (s.gesture <= 0) return;
-  if (s.gesture === 1) {
-    // nothing changed: drop the snapshot we took
-    if (!s.gestureChanged) useEditor.setState({ gesture: 0, past: s.past.slice(0, -1) });
-    else useEditor.setState({ gesture: 0, gestureChanged: false });
-  } else useEditor.setState({ gesture: s.gesture - 1 });
+  if (s.gesture > 1) return useEditor.setState({ gesture: s.gesture - 1 });
+  const start = gestureStart;
+  const keys = gestureKeys;
+  gestureStart = null;
+  gestureKeys = new Set();
+  if (!s.gestureChanged || !start || !keys.size) return useEditor.setState({ gesture: 0, gestureChanged: false });
+  // only the units this gesture touched: changes others made meanwhile stay out of the undo step
+  const entry: HistoryEntry = { undo: diffDocs(s.doc, start).filter((c) => keys.has(c.k)), redo: diffDocs(start, s.doc).filter((c) => keys.has(c.k)) };
+  useEditor.setState({ gesture: 0, gestureChanged: false, past: [...s.past.slice(-HISTORY_LIMIT + 1), entry], future: [] });
 }
 
 function cleanSelection(doc: AppDoc, pageId: string, ids: string[]) {
@@ -211,36 +259,25 @@ function cleanSelection(doc: AppDoc, pageId: string, ids: string[]) {
   return page ? ids.filter((id) => page.elements[id]) : [];
 }
 
+function jump(entry: HistoryEntry, direction: "undo" | "redo") {
+  const s = ed();
+  const doc = applyChanges(s.doc, entry[direction]);
+  const pageId = doc.pages.some((p) => p.id === s.pageId) ? s.pageId : doc.homePageId;
+  return { doc, pageId, selection: cleanSelection(doc, pageId, s.selection), editingTextId: null, saveState: dirtyState(s) };
+}
+
 export function undo() {
   const s = ed();
-  if (!s.past.length) return;
-  const prev = s.past[s.past.length - 1];
-  const pageId = prev.pages.some((p) => p.id === s.pageId) ? s.pageId : prev.homePageId;
-  useEditor.setState({
-    doc: prev,
-    past: s.past.slice(0, -1),
-    future: [s.doc, ...s.future].slice(0, HISTORY_LIMIT),
-    pageId,
-    selection: cleanSelection(prev, pageId, s.selection),
-    editingTextId: null,
-    saveState: "dirty",
-  });
+  if (!s.past.length || s.gesture > 0) return;
+  const entry = s.past[s.past.length - 1];
+  useEditor.setState({ ...jump(entry, "undo"), past: s.past.slice(0, -1), future: [entry, ...s.future].slice(0, HISTORY_LIMIT) });
 }
 
 export function redo() {
   const s = ed();
-  if (!s.future.length) return;
-  const next = s.future[0];
-  const pageId = next.pages.some((p) => p.id === s.pageId) ? s.pageId : next.homePageId;
-  useEditor.setState({
-    doc: next,
-    past: [...s.past, s.doc].slice(-HISTORY_LIMIT),
-    future: s.future.slice(1),
-    pageId,
-    selection: cleanSelection(next, pageId, s.selection),
-    editingTextId: null,
-    saveState: "dirty",
-  });
+  if (!s.future.length || s.gesture > 0) return;
+  const entry = s.future[0];
+  useEditor.setState({ ...jump(entry, "redo"), past: [...s.past, entry].slice(-HISTORY_LIMIT), future: s.future.slice(1) });
 }
 
 /* ------------------------------------------------------------------ selection */

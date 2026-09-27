@@ -34,6 +34,7 @@ Copy `.env.example` to `.env.local` and fill in what you need. For trying it out
 | `NEXT_PUBLIC_APP_PROTOCOL` | `https` (default) or `http`. Only if the automatic guess is wrong. |
 | `TRUST_PROXY` | `1` when a proxy (Cloudflare, Caddy, Nginx) sits in front, so rate limits and HTTPS detection see the real visitor. Automatic on Vercel. |
 | `DATABASE_URL` | Postgres connection string. Required on serverless hosts (Vercel). Empty: data is stored in files. |
+| `DATABASE_URL_UNPOOLED` | A direct (non-pooled) Postgres address for live collaboration across servers, when `DATABASE_URL` goes through a pooler. |
 | `DATABASE_POOL_SIZE` | Database connections to keep open (default 5). |
 | `CRAFTBASE_SECRET` | 32+ random characters for server-side hashing. Set it with Postgres; file storage creates one itself. |
 | `CRAFTBASE_DATA_DIR` | Folder for file storage when there's no database (default `./.data`). Keep it out of OneDrive/Dropbox. |
@@ -94,6 +95,25 @@ File storage works well here: all data lives in `.data/` (or `CRAFTBASE_DATA_DIR
 3. Add both `example.com` and `*.example.com` under Project → Domains. Vercel requires its own nameservers for wildcard domains; it then issues the certificates for you.
 
 Tables are created automatically on the first request.
+
+## Working together
+
+Open an app and press **Share** (top bar) to invite people with a single-use link:
+
+- **Can edit** — they open the app in the builder and edit the design and database with you, live. Everyone sees who's here (avatars in the top bar; click one to jump to where they are), what they've selected and where their pointer is. Changes save on their own a moment after you make them and appear on everyone's screen. **Undo** only undoes your own changes.
+- **Live-app admin** — they manage records and see admin-only pages in the published app, but can't open the builder.
+
+Only the owner invites people, changes roles, deletes the app or starts phone builds. Removing someone (or changing an editor to admin) ends their editing at once. Apps shared with you are listed under **Shared with you** in *My apps*.
+
+How it works: design changes are sent per element (not the whole page), numbered by the server, and streamed to every open editor with Server-Sent Events; a tab that was offline catches up on its own. With one server nothing else is needed. With several servers (Vercel, or more than one Node process) use Postgres: servers pass changes to each other with `LISTEN/NOTIFY`. `LISTEN` needs a direct connection, so if `DATABASE_URL` goes through a pooler (Neon's `-pooler` address, PgBouncer), also set `DATABASE_URL_UNPOOLED` (Vercel's Neon integration sets it for you). On Vercel each live connection reconnects every few minutes; nothing is lost when it does.
+
+## Editing on a phone or tablet
+
+The editor works with touch: drag with one finger to scroll the canvas (an element only moves once it's selected — tap it first), pinch to zoom, or use the scrollbars and the zoom buttons at the bottom right of the canvas.
+
+## Testing on devices
+
+**Preview** opens your app in the device of your choice — iPhone, Android phones, iPads and other tablets, laptops and desktop monitors, or a custom size — at that device's real screen size, in portrait or landscape. **On a real device** shows a QR code that opens the preview on your own phone (it has to reach this site's address, so publish the app or run the site on your network first).
 
 ## Phone apps
 

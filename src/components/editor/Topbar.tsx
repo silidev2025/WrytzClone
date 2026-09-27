@@ -23,23 +23,32 @@ import {
   Rocket,
   Smartphone,
   Undo2,
+  UserPlus,
+  WifiOff,
 } from "lucide-react";
 import { api, errorMessage } from "@/lib/client/api";
 import { relativeTime } from "@/lib/shared/util";
 import { Dropdown, type MenuEntry } from "@/components/ui/Popover";
 import { toast } from "@/components/ui/toast";
-import { addPage, ed, getPage, redo, setPage, undo, useEditor } from "./store";
+import { addPage, ed, getPage, redo, setPage, undo, useEditor, type Peer } from "./store";
 import { saveNow } from "./saving";
 
 function SaveStatus() {
   const state = useEditor((s) => s.saveState);
   const error = useEditor((s) => s.saveError);
   const last = useEditor((s) => s.lastSavedAt);
+  const live = useEditor((s) => s.live);
   const [, tick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 30000);
     return () => clearInterval(t);
   }, []);
+  if (live === "offline" && state !== "error")
+    return (
+      <span className="save-status error" title="Your changes are kept on this screen and saved as soon as the connection is back.">
+        <WifiOff size={14} /> Reconnecting…
+      </span>
+    );
   if (state === "saving")
     return (
       <span className="save-status">
@@ -63,6 +72,50 @@ function SaveStatus() {
     <span className="save-status ok" title={last ? `Saved ${relativeTime(last)}` : "All changes saved"}>
       <Check size={14} /> Saved
     </span>
+  );
+}
+
+const initials = (name: string) =>
+  name
+    .split(/\s+/)
+    .map((p) => p[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase() || "?";
+
+/** Jump to where a collaborator is working. */
+function follow(p: Peer) {
+  if (p.view === "database") return useEditor.setState({ view: "database" });
+  useEditor.setState({ view: "design", bp: ed().doc.settings.kind === "mobile" ? "desktop" : p.bp });
+  if (p.pageId && ed().doc.pages.some((x) => x.id === p.pageId)) setPage(p.pageId);
+}
+
+/** Everyone else editing right now (one avatar per person), like in Google Docs. */
+function Collaborators() {
+  const peers = useEditor((s) => s.peers);
+  const me = useEditor((s) => s.user.id);
+  const pages = useEditor((s) => s.doc.pages);
+  const people = new Map<string, Peer>();
+  for (const p of Object.values(peers)) {
+    if (p.userId === me) continue;
+    const seen = people.get(p.userId);
+    if (!seen || p.at > seen.at) people.set(p.userId, p);
+  }
+  const list = [...people.values()];
+  if (!list.length) return null;
+  return (
+    <div className="peer-stack" role="group" aria-label="People editing now">
+      {list.slice(0, 4).map((p) => {
+        const page = pages.find((x) => x.id === p.pageId)?.name;
+        const where = p.view === "database" ? "in the database" : page ? `on ${page}` : "";
+        return (
+          <button key={p.userId} className="peer-avatar" style={{ background: p.color }} title={`${p.name}${where ? ` — ${where}` : ""}. Click to go there.`} aria-label={`${p.name}${where ? `, ${where}` : ""}. Go there.`} onClick={() => follow(p)}>
+            {initials(p.name)}
+          </button>
+        );
+      })}
+      {list.length > 4 && <span className="peer-more">+{list.length - 4}</span>}
+    </div>
   );
 }
 
@@ -109,7 +162,7 @@ function AppName() {
   );
 }
 
-export function Topbar({ onPreview, onPublish, onVersions, onShortcuts }: { onPreview: () => void; onPublish: () => void; onVersions: () => void; onShortcuts: () => void }) {
+export function Topbar({ onPreview, onPublish, onVersions, onShortcuts, onShare }: { onPreview: () => void; onPublish: () => void; onVersions: () => void; onShortcuts: () => void; onShare: () => void }) {
   const app = useEditor((s) => s.app);
   const pages = useEditor((s) => s.doc.pages);
   const homeId = useEditor((s) => s.doc.homePageId);
@@ -222,6 +275,10 @@ export function Topbar({ onPreview, onPublish, onVersions, onShortcuts }: { onPr
           </>
         )}
         <SaveStatus />
+        <Collaborators />
+        <button className="btn sm share-btn" onClick={onShare} title="Share: invite people to edit with you">
+          <UserPlus size={15} /> <span className="hide-narrow">Share</span>
+        </button>
         <button className="icon-btn hide-narrow" onClick={onShortcuts} title="Keyboard shortcuts" aria-label="Keyboard shortcuts">
           <Keyboard size={17} />
         </button>
@@ -229,7 +286,7 @@ export function Topbar({ onPreview, onPublish, onVersions, onShortcuts }: { onPr
           <History size={17} />
         </button>
         <button className="btn sm" onClick={onPreview}>
-          <Eye size={15} /> Preview
+          <Eye size={15} /> <span className="hide-phone">Preview</span>
         </button>
         <button className="btn gradient sm" onClick={onPublish}>
           <Rocket size={15} /> {published ? (outdated ? "Publish update" : "Published") : "Publish"}

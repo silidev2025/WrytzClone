@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ExternalLink, History, Monitor, RefreshCw, RotateCcw, Save, Smartphone, Tablet, Trash2 } from "lucide-react";
+import { ExternalLink, History, RefreshCw, RotateCcw, Save, Trash2 } from "lucide-react";
 import type { AppDoc } from "@/lib/shared/types";
 import { relativeTime } from "@/lib/shared/util";
 import { api, errorMessage } from "@/lib/client/api";
@@ -10,6 +10,8 @@ import { toast } from "@/components/ui/toast";
 import { confirmDialog } from "@/components/ui/confirm";
 import { ed, useEditor } from "../store";
 import { saveNow } from "../saving";
+import { liveClientId, resetFromServer } from "../live";
+import { DevicePreview } from "./DevicePreview";
 
 interface VersionRow {
   id: string;
@@ -55,8 +57,8 @@ export function VersionsDialog({ open, onClose }: { open: boolean; onClose: () =
     if (!(await confirmDialog({ title: `Restore “${v.label}”?`, message: "Your current design is replaced by this version (save a version first if you want to keep it). Your database isn't changed.", confirmLabel: "Restore" }))) return;
     try {
       if (ed().saveState !== "saved") await saveNow();
-      const res = await api<{ doc: AppDoc; revision: number }>(`/api/apps/${appId}/versions/${v.id}`, { method: "POST", body: {} });
-      useEditor.setState({ doc: res.doc, revision: res.revision, past: [], future: [], selection: [], pageId: res.doc.homePageId, saveState: "saved" });
+      const res = await api<{ doc: AppDoc; revision: number }>(`/api/apps/${appId}/versions/${v.id}`, { method: "POST", body: { clientId: liveClientId() } });
+      resetFromServer(res.doc, res.revision);
       toast.success("Version restored");
       onClose();
     } catch (err) {
@@ -119,16 +121,11 @@ export function VersionsDialog({ open, onClose }: { open: boolean; onClose: () =
   );
 }
 
-const DEVICES = [
-  { id: "desktop", label: "Desktop", width: 1280, icon: <Monitor size={15} /> },
-  { id: "tablet", label: "Tablet", width: 820, icon: <Tablet size={15} /> },
-  { id: "mobile", label: "Phone", width: 390, icon: <Smartphone size={15} /> },
-] as const;
 
 export function PreviewDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const appId = useEditor((s) => s.app.id);
+  const phoneApp = useEditor((s) => s.doc.settings.kind === "mobile");
   const pagePath = useEditor((s) => s.doc.pages.find((p) => p.id === s.pageId)?.path || "");
-  const [device, setDevice] = useState<(typeof DEVICES)[number]["id"]>("desktop");
   const [key, setKey] = useState(0);
   const [ready, setReady] = useState(false);
 
@@ -146,24 +143,17 @@ export function PreviewDialog({ open, onClose }: { open: boolean; onClose: () =>
   }, [open]);
 
   const src = `/preview/${appId}${pagePath ? `/${pagePath}` : ""}`;
-  const d = DEVICES.find((x) => x.id === device)!;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       size="xl"
+      className="preview-dialog"
       title="Preview"
-      description="This is exactly what visitors will see — buttons, forms and data all work (using your real database)."
+      description="Test your app on the device you choose. Buttons, forms and data all work (using your real database)."
       footer={
         <>
-          <div className="segmented" style={{ marginRight: "auto" }}>
-            {DEVICES.map((x) => (
-              <button key={x.id} aria-pressed={device === x.id} onClick={() => setDevice(x.id)}>
-                {x.icon} {x.label}
-              </button>
-            ))}
-          </div>
           <button className="btn" onClick={() => setKey((k) => k + 1)}>
             <RefreshCw size={15} /> Reload
           </button>
@@ -173,9 +163,7 @@ export function PreviewDialog({ open, onClose }: { open: boolean; onClose: () =>
         </>
       }
     >
-      <div className={`preview-frame-wrap ${device === "mobile" ? "phone" : ""}`}>
-        {ready ? <iframe key={key} title="App preview" src={src} style={{ width: device === "desktop" ? "100%" : d.width + (device === "mobile" ? 16 : 0) }} /> : <span className="spinner" />}
-      </div>
+      {ready ? <DevicePreview src={src} reloadKey={key} phoneApp={phoneApp} /> : <span className="spinner" />}
     </Modal>
   );
 }

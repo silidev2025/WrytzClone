@@ -4,6 +4,7 @@ import { createRecord, deleteRecords, getCollection, recordForViewer, updateReco
 import { audit } from "@/lib/server/audit";
 import { clientIp, rateLimit, readJson, route } from "@/lib/server/http";
 import { idempotent } from "@/lib/server/idempotency";
+import { dataChanged } from "@/lib/server/live";
 
 type Ctx = { params: Promise<{ appId: string }> };
 
@@ -24,6 +25,7 @@ export const POST = route<Ctx>(async (req, { params }) => {
   return idempotent(`create:${appId}:${viewer.user?.id ?? clientIp(req)}`, body.idempotencyKey, async () => {
     const rec = await createRecord(col, body.values || {}, viewer);
     await recordSubmission(appId);
+    dataChanged(appId, "records", col.id);
     return { record: await recordForViewer(col, rec, viewer) };
   });
 });
@@ -35,6 +37,7 @@ export const PATCH = route<Ctx>(async (req, { params }) => {
   const body = await readJson<Body>(req, 2_000_000);
   const col = await getCollection(appId, String(body.collectionId || ""));
   const rec = await updateRecord(col, String(body.recordId || ""), body.values || {}, viewer);
+  dataChanged(appId, "records", col.id);
   return { record: await recordForViewer(col, rec, viewer) };
 });
 
@@ -46,5 +49,6 @@ export const DELETE = route<Ctx>(async (req, { params }) => {
   const col = await getCollection(appId, String(body.collectionId || ""));
   await deleteRecords(col, [String(body.recordId || "")], viewer);
   await audit({ action: "record.deleted", userId: viewer.user?.id ?? null, appId, target: `${col.name}/${String(body.recordId || "")}`, ip: clientIp(req) });
+  dataChanged(appId, "records");
   return { ok: true };
 });

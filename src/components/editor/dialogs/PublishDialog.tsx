@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CircleAlert, CircleCheck, Copy, ExternalLink, Globe, Link2, Rocket, ShieldAlert, Smartphone, Trash2 } from "lucide-react";
+import { CircleAlert, CircleCheck, Copy, ExternalLink, Globe, Rocket, ShieldAlert, Smartphone } from "lucide-react";
 import type { AppMeta } from "@/lib/shared/types";
 import { relativeTime, slugify } from "@/lib/shared/util";
-import { ROOT_DOMAIN, platformUrl, shareableAppUrl } from "@/lib/shared/urls";
+import { ROOT_DOMAIN, shareableAppUrl } from "@/lib/shared/urls";
 import { ACCESS_LABELS } from "@/lib/shared/fields";
 import { contactLine } from "@/lib/shared/legal";
 import { api, errorMessage } from "@/lib/client/api";
@@ -38,6 +38,7 @@ export function PublishDialog({ open, onClose }: { open: boolean; onClose: () =>
   const app = useEditor((s) => s.app);
   const revision = useEditor((s) => s.revision);
   const phoneApp = useEditor((s) => s.doc.settings.kind === "mobile");
+  const isOwner = useEditor((s) => s.role === "owner");
   const [slug, setSlug] = useState("");
   const [description, setDescription] = useState("");
   const [explore, setExplore] = useState(false);
@@ -179,7 +180,7 @@ export function PublishDialog({ open, onClose }: { open: boolean; onClose: () =>
         </div>
       )}
 
-      {phoneApp && <MobileDeploymentPanel appId={app.id} open={open} publishedAt={live?.at} busy={busy} disabled={!!meta.takenDown || !!(check && !check.available)} onPublish={publish} />}
+      {phoneApp && isOwner && <MobileDeploymentPanel appId={app.id} open={open} publishedAt={live?.at} busy={busy} disabled={!!meta.takenDown || !!(check && !check.available)} onPublish={publish} />}
 
       {live && (
         <details className="card install-help" open={!phoneApp} style={{ padding: "12px 14px", background: "var(--panel-2)" }}>
@@ -237,7 +238,12 @@ export function PublishDialog({ open, onClose }: { open: boolean; onClose: () =>
 
       <DataAccessCheck />
 
-      <AdminsPanel appId={app.id} open={open} />
+      <div className="field">
+        <span className="field-label">People</span>
+        <span className="field-hint">
+          Invite people to edit with you, or to manage the live app, with <strong>Share</strong> in the top bar.
+        </span>
+      </div>
 
       <ActivityPanel appId={app.id} open={open} />
     </Modal>
@@ -270,98 +276,14 @@ function DataAccessCheck() {
   );
 }
 
-interface AdminList {
-  admins: { id: string; name: string; email: string }[];
-  invites: { id: string; createdAt: string; expiresAt: string }[];
-}
-
-/** Admins join with a single-use invite link (an email address alone proves nothing). */
-function AdminsPanel({ appId, open }: { appId: string; open: boolean }) {
-  const [list, setList] = useState<AdminList | null>(null);
-  const [link, setLink] = useState<string | null>(null);
-  const load = () =>
-    api<AdminList>(`/api/apps/${appId}/admins`)
-      .then(setList)
-      .catch(() => setList({ admins: [], invites: [] }));
-  useEffect(() => {
-    if (open) void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, appId]);
-  const invite = async () => {
-    try {
-      const res = await api<{ path: string }>(`/api/apps/${appId}/admins`, { body: {} });
-      setLink(platformUrl(res.path).startsWith("/") ? window.location.origin + res.path : platformUrl(res.path));
-      void load();
-    } catch (err) {
-      toast.error(errorMessage(err));
-    }
-  };
-  const remove = async (body: { inviteId?: string; userId?: string }, label: string) => {
-    if (!(await confirmDialog({ title: label, confirmLabel: "Remove", danger: true }))) return;
-    try {
-      await api(`/api/apps/${appId}/admins`, { method: "DELETE", body });
-      void load();
-    } catch (err) {
-      toast.error(errorMessage(err));
-    }
-  };
-  return (
-    <div className="field">
-      <span className="field-label">App admins</span>
-      <span className="field-hint">Admins can open admin-only pages and see and change every record in the live app, including private fields. Invite people with a link — it works once and expires in 7 days.</span>
-      {list?.admins.map((a) => (
-        <div key={a.id} className="insp-row">
-          <span style={{ flex: 1 }}>
-            <strong>{a.name}</strong> <span className="mini-note">{a.email}</span>
-          </span>
-          <button className="icon-btn sm" onClick={() => void remove({ userId: a.id }, `Remove ${a.name} as an admin?`)} aria-label={`Remove ${a.name}`}>
-            <Trash2 size={14} />
-          </button>
-        </div>
-      ))}
-      {list?.invites.map((i) => (
-        <div key={i.id} className="insp-row">
-          <span style={{ flex: 1 }} className="mini-note">
-            Open invite link · expires {relativeTime(i.expiresAt)}
-          </span>
-          <button className="icon-btn sm" onClick={() => void remove({ inviteId: i.id }, "Cancel this invite link?")} aria-label="Cancel invite">
-            <Trash2 size={14} />
-          </button>
-        </div>
-      ))}
-      {link && (
-        <div className="alert info" style={{ display: "grid", gap: 8 }}>
-          <span>Send this link to the person you want as an admin. Anyone who opens it while signed in can accept it, so share it privately.</span>
-          <div style={{ display: "flex", gap: 6 }}>
-            <input className="input" readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
-            <button
-              className="btn sm"
-              onClick={() => {
-                void navigator.clipboard.writeText(link);
-                toast.success("Invite link copied");
-              }}
-            >
-              <Copy size={14} /> Copy
-            </button>
-          </div>
-        </div>
-      )}
-      <div>
-        <button className="btn" onClick={() => void invite()}>
-          <Link2 size={15} /> Create invite link
-        </button>
-      </div>
-    </div>
-  );
-}
-
 const ACTIVITY_LABELS: Record<string, string> = {
   "app.published": "Published",
   "app.unpublished": "Unpublished",
-  "admin.invited": "Admin invite link created",
-  "admin.invite.revoked": "Admin invite cancelled",
-  "admin.added": "Admin joined",
-  "admin.removed": "Admin removed",
+  "admin.invited": "Invite link created",
+  "admin.invite.revoked": "Invite link cancelled",
+  "admin.added": "Someone joined",
+  "admin.removed": "Someone was removed",
+  "member.role": "Someone's access changed",
   "collection.access": "Access rules changed",
   "collection.deleted": "Collection deleted",
   "records.deleted": "Rows deleted in the editor",

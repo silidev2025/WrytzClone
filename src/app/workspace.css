@@ -996,3 +996,44 @@ mark {
 .landing-footer .legal-footer {
   padding: 0;
 }
+
+/* apps other people shared with you */
+.shared-apps {
+  margin-top: 36px;
+}
+.shared-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.shared-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  color: inherit;
+  text-decoration: none;
+}
+.shared-item:hover {
+  border-color: var(--brand);
+}
+.shared-item.disabled {
+  opacity: 0.6;
+}
+.shared-meta {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+}
+.shared-meta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shared-meta small {
+  color: var(--muted);
+}

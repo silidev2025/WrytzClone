@@ -718,6 +718,8 @@ export interface AppMeta {
   templateId?: string;
   /** account ids of people who accepted an admin invite (never emails: an address proves nothing) */
   adminIds: string[];
+  /** the subset of adminIds who may also edit the design and database in the builder */
+  editorIds?: string[];
   published: null | {
     slug: string;
     at: string;

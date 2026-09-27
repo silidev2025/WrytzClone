@@ -38,7 +38,8 @@ export type AuditAction =
   | "app.takedown"
   | "app.restored"
   | "account.suspended"
-  | "account.unsuspended";
+  | "account.unsuspended"
+  | "member.role";
 
 export interface AuditEvent {
   id: string;

@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/server/auth";
-import { deleteApp, getDraft, getOwnedApp, updateAppMeta } from "@/lib/server/apps";
+import { appRole, deleteApp, getDraft, getEditableApp, updateAppMeta } from "@/lib/server/apps";
 import { listCollections } from "@/lib/server/data";
 import { audit } from "@/lib/server/audit";
 import { clientIp, readJson, route } from "@/lib/server/http";
@@ -9,9 +9,9 @@ type Ctx = { params: Promise<{ appId: string }> };
 export const GET = route<Ctx>(async (_req, { params }) => {
   const { appId } = await params;
   const user = await requireUser();
-  const meta = await getOwnedApp(user, appId);
+  const meta = await getEditableApp(user, appId);
   const draft = await getDraft(appId);
-  return { app: meta, doc: draft.doc, revision: draft.revision, collections: await listCollections(appId) };
+  return { app: meta, role: appRole(meta, user), doc: draft.doc, revision: draft.revision, collections: await listCollections(appId) };
 });
 
 export const PATCH = route<Ctx>(async (req, { params }) => {

@@ -29,7 +29,9 @@ export function startMaintenance(getStore: () => Promise<Store>) {
 }
 
 export async function runMaintenance(store: Store, now = Date.now()) {
-  await cleanMobileDeployments(store);
+  // one failing job must not stop the retention clean-up below
+  await cleanMobileDeployments(store).catch((err) => console.error("[maintenance] phone builds", err));
+  for (const e of await store.scan<{ id: string; at: string }>("live")) if (now - Date.parse(e.at) > 3600_000) await store.delete("live", e.id);
   const expired = (iso: string | undefined) => !!iso && new Date(iso).getTime() < now;
   let removed = 0;
   for (const s of await store.scan<{ id: string; expiresAt: string }>("sessions")) if (expired(s.expiresAt)) (await store.delete("sessions", s.id), removed++);

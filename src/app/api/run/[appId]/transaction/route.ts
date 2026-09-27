@@ -4,6 +4,7 @@ import { runTransaction } from "@/lib/server/data";
 import { recordSubmission } from "@/lib/server/apps";
 import { clientIp, rateLimit, readJson, route } from "@/lib/server/http";
 import { idempotent } from "@/lib/server/idempotency";
+import { dataChanged } from "@/lib/server/live";
 
 type Ctx = { params: Promise<{ appId: string }> };
 
@@ -16,6 +17,7 @@ export const POST = route<Ctx>(async (req, { params }) => {
   return idempotent(`tx:${appId}:${viewer.user?.id ?? clientIp(req)}`, body.idempotencyKey, async () => {
     const results = await runTransaction(appId, body.steps || [], viewer);
     if ((body.steps || []).some((s) => s.kind === "create")) await recordSubmission(appId);
+    dataChanged(appId, "records");
     return { steps: results };
   });
 });

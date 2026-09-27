@@ -15,7 +15,7 @@ const csp = [
   "font-src 'self' data: https://fonts.gstatic.com",
   "img-src 'self' data: blob: https:",
   "media-src 'self' blob: https:",
-  "frame-src https:",
+  "frame-src 'self' https:",
   `connect-src 'self'${dev ? " ws: wss:" : ""}`,
   "worker-src 'self'",
   "manifest-src 'self'",

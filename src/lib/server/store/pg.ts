@@ -143,5 +143,33 @@ export async function createPgStore(connectionString: string): Promise<Store> {
     async deleteBlob(id) {
       await q(`DELETE FROM cb_blobs WHERE id = $1`, [id]);
     },
+    async notify(channel, payload) {
+      await q(`SELECT pg_notify($1, $2)`, [channel, payload]);
+    },
+    async listen(channel, onMessage) {
+      if (!/^[a-z_]+$/.test(channel)) throw new Error("Invalid channel name");
+      // LISTEN needs its own direct connection: connection poolers (Neon's "-pooler" address,
+      // PgBouncer) don't keep it, so prefer the unpooled address when the host provides one
+      const direct = process.env.DATABASE_URL_UNPOOLED || process.env.POSTGRES_URL_NON_POOLING || connectionString;
+      const { Client } = await import("pg");
+      const connect = async () => {
+        const client = new Client({ connectionString: direct });
+        let dropped = false;
+        const reconnect = () => {
+          if (dropped) return;
+          dropped = true;
+          client.end().catch(() => undefined);
+          setTimeout(() => void connect().catch((err) => console.error("[live] LISTEN failed", err)), 2000);
+        };
+        client.on("error", reconnect);
+        client.on("end", reconnect);
+        client.on("notification", (msg: { channel: string; payload?: string }) => {
+          if (msg.channel === channel && msg.payload) onMessage(msg.payload);
+        });
+        await client.connect();
+        await client.query(`LISTEN ${channel}`);
+      };
+      await connect();
+    },
   };
 }

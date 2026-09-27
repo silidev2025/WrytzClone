@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { currentUser } from "@/lib/server/auth";
-import { getAppMeta, getDraft } from "@/lib/server/apps";
+import { canEditApp, getAppMeta, getDraft } from "@/lib/server/apps";
 import { runtimeSession } from "@/lib/server/runtime";
 import { AppRuntime } from "@/components/runtime/AppRuntime";
 
@@ -12,7 +12,7 @@ export default async function PreviewPage({ params }: { params: Promise<{ appId:
   const user = await currentUser();
   if (!user) redirect(`/auth?next=${encodeURIComponent(`/preview/${appId}`)}`);
   const meta = await getAppMeta(appId).catch(() => null);
-  if (!meta || meta.ownerId !== user.id) notFound();
+  if (!meta || !canEditApp(meta, user)) notFound();
   const draft = await getDraft(appId);
   const session = await runtimeSession(appId);
   return (

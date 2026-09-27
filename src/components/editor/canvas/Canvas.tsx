@@ -37,6 +37,8 @@ import {
 import { angleFrom, resizeRotated, snapMove, snapResize, unionRect, type Handle, type Rect } from "./geometry";
 import { registerDropTarget, type Payload } from "./dragPayload";
 import { Overlay } from "./Overlay";
+import { CanvasScrollbars, CanvasZoomButtons, PeersOverlay } from "./CanvasExtras";
+import { liveCursor } from "../live";
 import { useCanvasContextMenu } from "./contextMenu";
 
 /* ------------------------------------------------------------------ DOM helpers */
@@ -137,7 +139,13 @@ type Drag =
     }
   | { kind: "rotate"; id: string; center: { x: number; y: number } }
   | { kind: "marquee"; startX: number; startY: number; additive: boolean; base: string[] }
-  | { kind: "height"; startY: number; start: number };
+  | { kind: "height"; startY: number; start: number }
+  /** two fingers: zoom around their midpoint and pan with it */
+  | { kind: "pinch"; dist: number; zoom: number; mid: { x: number; y: number }; pan: { x: number; y: number } }
+  /** one finger that may become a pan (moved) or a tap (didn't) */
+  | { kind: "touch"; startX: number; startY: number; pan: { x: number; y: number }; tapId: string | null; moved: boolean };
+
+const TOUCH_SLOP = 8;
 
 /* ------------------------------------------------------------------ component */
 
@@ -146,6 +154,8 @@ export function Canvas() {
   const hostRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<Drag | null>(null);
   const spaceRef = useRef(false);
+  // fingers currently on the canvas (touch screens)
+  const touches = useRef(new Map<number, { x: number; y: number }>());
 
   const doc = useEditor((s) => s.doc);
   const pageId = useEditor((s) => s.pageId);
@@ -560,6 +570,23 @@ export function Canvas() {
     };
   };
 
+  /** A second finger turns whatever the first one started into a pinch. */
+  const startPinch = (vp: HTMLDivElement) => {
+    const d = dragRef.current;
+    if (d && (d.kind === "move" || d.kind === "resize" || d.kind === "rotate" || d.kind === "height" || d.kind === "reorder")) endGesture();
+    useEditor.setState({ guides: [], dropTargetId: undefined, insertLine: null, marquee: null });
+    const [a, b] = [...touches.current.values()];
+    const r = vp.getBoundingClientRect();
+    const s = ed();
+    dragRef.current = {
+      kind: "pinch",
+      dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+      zoom: s.zoom,
+      mid: { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top },
+      pan: { ...s.pan },
+    };
+  };
+
   const onPointerDown = (e: React.PointerEvent) => {
     const vp = viewportRef.current;
     if (!vp) return;
@@ -567,6 +594,29 @@ export function Canvas() {
     if (target.closest(".rt-text-editing")) return;
     if (target.closest("[data-canvas-ui]")) return;
     ctxMenu.close();
+
+    if (e.pointerType === "touch") {
+      touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      vp.setPointerCapture(e.pointerId);
+      if (touches.current.size === 2) return startPinch(vp);
+      if (touches.current.size > 2) return;
+      // one finger: resize handles and already-selected elements behave as with a mouse; anything
+      // else scrolls the canvas when dragged, and selects when tapped
+      const s0 = ed();
+      const page0 = getPage(s0);
+      const f0 = frame();
+      // browsers snap touches onto nearby small controls (like the page-height handle): use what's
+      // really under the finger, so a drag next to a handle scrolls instead of resizing
+      const under = (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null) ?? target;
+      const handle = under.closest("[data-handle]");
+      const node0 = under.closest<HTMLElement>("[data-el-id]");
+      const hit0 = node0 && f0?.contains(node0) && page0.elements[node0.dataset.elId!] ? resolveHit(page0, node0.dataset.elId!, false) : null;
+      const onSelected = !!hit0 && s0.selection.some((id) => id === hit0 || isAncestor(page0, id, hit0));
+      if (!handle && !onSelected && !under.closest("[data-tab-index]")) {
+        dragRef.current = { kind: "touch", startX: e.clientX, startY: e.clientY, pan: { ...s0.pan }, tapId: hit0, moved: false };
+        return;
+      }
+    }
 
     // pan: middle button, space + drag, or right-button drag on empty canvas
     if (e.button === 1 || (e.button === 0 && spaceRef.current)) {
@@ -665,8 +715,30 @@ export function Canvas() {
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
+    if (e.pointerType === "touch" && touches.current.has(e.pointerId)) touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    else if (e.pointerType !== "touch") liveCursor(toFrame(e.clientX, e.clientY));
     const d = dragRef.current;
     const s = ed();
+    if (d?.kind === "pinch") {
+      const vp = viewportRef.current;
+      const pts = [...touches.current.values()];
+      if (!vp || pts.length < 2) return;
+      const [a, b] = pts;
+      const r = vp.getBoundingClientRect();
+      const z = Math.max(0.1, Math.min(4, d.zoom * (Math.hypot(a.x - b.x, a.y - b.y) / d.dist)));
+      const mid = { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top };
+      // keep the point that was under the fingers under them
+      const wx = (d.mid.x - d.pan.x) / d.zoom;
+      const wy = (d.mid.y - d.pan.y) / d.zoom;
+      useEditor.setState({ zoom: z, pan: { x: mid.x - wx * z, y: mid.y - wy * z } });
+      return;
+    }
+    if (d?.kind === "touch") {
+      if (!d.moved && Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < TOUCH_SLOP) return;
+      d.moved = true;
+      useEditor.setState({ pan: { x: d.pan.x + e.clientX - d.startX, y: d.pan.y + e.clientY - d.startY } });
+      return;
+    }
     if (!d) {
       // hover highlight
       const node = (e.target as HTMLElement).closest?.<HTMLElement>("[data-el-id]");
@@ -860,6 +932,28 @@ export function Canvas() {
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
+    if (e.pointerType === "touch") {
+      touches.current.delete(e.pointerId);
+      const cur = dragRef.current;
+      if (cur?.kind === "pinch") {
+        // lifting one finger of a pinch doesn't start anything new
+        if (touches.current.size === 0) dragRef.current = null;
+        return;
+      }
+      if (cur?.kind === "touch") {
+        dragRef.current = null;
+        try {
+          viewportRef.current?.releasePointerCapture(e.pointerId);
+        } catch {
+          /* not captured */
+        }
+        if (!cur.moved) {
+          if (cur.tapId) select([cur.tapId]);
+          else clearSelection();
+        }
+        return;
+      }
+    }
     const d = dragRef.current;
     dragRef.current = null;
     viewportRef.current?.classList.remove("panning");
@@ -1001,7 +1095,10 @@ export function Canvas() {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      onPointerLeave={() => !dragRef.current && hoverId && useEditor.setState({ hoverId: null })}
+      onPointerLeave={(e) => {
+        if (e.pointerType !== "touch") liveCursor(null);
+        if (!dragRef.current && hoverId) useEditor.setState({ hoverId: null });
+      }}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       onDragOver={(e) => {
@@ -1017,6 +1114,9 @@ export function Canvas() {
         </div>
       </div>
       <Overlay viewportRef={viewportRef} hostRef={hostRef} flowMobile={flowMobile} />
+      <PeersOverlay viewportRef={viewportRef} hostRef={hostRef} />
+      <CanvasScrollbars viewportRef={viewportRef} hostRef={hostRef} />
+      <CanvasZoomButtons />
       {ctxMenu.node}
     </div>
   );

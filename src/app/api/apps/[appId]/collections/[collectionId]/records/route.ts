@@ -1,16 +1,17 @@
 import type { DataFilter } from "@/lib/shared/types";
 import { requireUser } from "@/lib/server/auth";
-import { getOwnedApp } from "@/lib/server/apps";
+import { getEditableApp } from "@/lib/server/apps";
 import { createRecord, deleteRecords, getCollection, makerRecord, queryRawRecords } from "@/lib/server/data";
 import { audit } from "@/lib/server/audit";
 import { badRequest, clientIp, readJson, route } from "@/lib/server/http";
+import { dataChanged } from "@/lib/server/live";
 
 type Ctx = { params: Promise<{ appId: string; collectionId: string }> };
 
 async function setup(params: Ctx["params"]) {
   const { appId, collectionId } = await params;
   const user = await requireUser();
-  await getOwnedApp(user, appId);
+  await getEditableApp(user, appId);
   const col = await getCollection(appId, collectionId);
   return { appId, user, col, viewer: { user, isAdmin: true } };
 }
@@ -42,7 +43,9 @@ export const GET = route<Ctx>(async (req, { params }) => {
 export const POST = route<Ctx>(async (req, { params }) => {
   const { appId, col, viewer } = await setup(params);
   const body = await readJson<{ values?: Record<string, unknown> }>(req);
-  return { record: makerRecord(appId, await createRecord(col, body.values || {}, viewer)) };
+  const record = makerRecord(appId, await createRecord(col, body.values || {}, viewer));
+  dataChanged(appId, "records", col.id);
+  return { record };
 });
 
 /** Bulk delete: { ids: [...] } */
@@ -52,5 +55,6 @@ export const DELETE = route<Ctx>(async (req, { params }) => {
   if (!Array.isArray(body.ids) || !body.ids.length) throw badRequest("Choose rows to delete.");
   const deleted = await deleteRecords(col, body.ids.map(String).slice(0, 5000), viewer);
   await audit({ action: "records.deleted", userId: viewer.user.id, appId: col.appId, target: col.name, detail: `${deleted} rows`, ip: clientIp(req) });
+  dataChanged(col.appId, "records", col.id);
   return { deleted };
 });

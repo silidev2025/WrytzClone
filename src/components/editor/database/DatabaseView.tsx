@@ -11,7 +11,7 @@ import { Dropdown } from "@/components/ui/Popover";
 import { Icon, iconExists } from "@/components/ui/Icon";
 import { confirmDialog, promptDialog } from "@/components/ui/confirm";
 import { toast } from "@/components/ui/toast";
-import { bumpData, ed, setCollections, useEditor } from "../store";
+import { bumpData, ed, mutate, setCollections, useEditor } from "../store";
 import { RecordsGrid } from "./RecordsGrid";
 import { FieldEditor } from "./FieldEditor";
 import { AccessDialog } from "./AccessDialog";
@@ -258,6 +258,12 @@ export function DatabaseView() {
     void load();
     setSelected(new Set());
   }, [load]);
+
+  // someone else (a collaborator, or a visitor of the live app) changed rows: show them
+  const liveDataVersion = useEditor((s) => s.liveDataVersion);
+  useEffect(() => {
+    if (liveDataVersion) void load();
+  }, [liveDataVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setPage(1);
@@ -550,13 +556,24 @@ export function DatabaseView() {
 
 /** After a field rename, rewrite {{record.Old}} bindings and form field names in every page. */
 function renameFieldBindings(oldName: string, newName: string) {
-  const s = ed();
   const esc = oldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(`(\\{\\{\\s*(?:record|item)\\.)${esc}(\\s*(?:\\||\\}\\}))`, "gi");
-  const text = JSON.stringify(s.doc);
-  const next = text.replace(re, (_m, a: string, b: string) => `${a}${JSON.stringify(newName).slice(1, -1)}${b}`);
-  if (next !== text) {
-    useEditor.setState({ doc: JSON.parse(next), saveState: "dirty" });
-    toast("Updated your pages to use the new field name.");
-  }
+  let changed = false;
+  // only strings that mention the old name change, so collaborators' other edits are untouched
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    const obj = node as Record<string, unknown>;
+    for (const key of Object.keys(obj)) {
+      const value = obj[key];
+      if (typeof value === "string") {
+        const next = value.replace(re, (_m, a: string, b: string) => `${a}${newName}${b}`);
+        if (next !== value) {
+          obj[key] = next;
+          changed = true;
+        }
+      } else walk(value);
+    }
+  };
+  mutate((d) => walk(d));
+  if (changed) toast("Updated your pages to use the new field name.");
 }

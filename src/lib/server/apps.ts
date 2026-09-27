@@ -11,6 +11,8 @@ import { createCollection, toRuntimeRecords, type Viewer } from "./data";
 import { copyDesignFiles } from "./media";
 import { repairTemplateDoc } from "@/lib/shared/templateRepairs";
 import { queueMobileDeployment, stopAppDeployments, type DeploymentDoc } from "./mobile";
+import { applyChanges, unitEntries, type Change } from "@/lib/shared/sync";
+import { publish, withAppLock } from "./live";
 
 interface DraftDoc {
   id: string; // app id
@@ -45,10 +47,36 @@ export async function getOwnedApp(user: User, appId: string, ops?: StoreOps): Pr
   return meta;
 }
 
-/** The owner, or someone who accepted an admin invite (matched by account id, never by email). */
+/**
+ * Who someone is to an app. Editors change the design and the database in the builder (and are
+ * admins of the live app); admins manage records in the live app only. Matched by account id.
+ */
+export type AppRole = "owner" | "editor" | "admin";
+
+export function appRole(meta: AppMeta, user: User | null): AppRole | null {
+  if (!user) return null;
+  if (meta.ownerId === user.id) return "owner";
+  if ((meta.editorIds || []).includes(user.id)) return "editor";
+  if ((meta.adminIds || []).includes(user.id)) return "admin";
+  return null;
+}
+
+export function canEditApp(meta: AppMeta, user: User | null): boolean {
+  const role = appRole(meta, user);
+  return role === "owner" || role === "editor";
+}
+
+/** The app, if this person may change it in the builder (its owner or an editor). */
+export async function getEditableApp(user: User, appId: string, ops?: StoreOps): Promise<AppMeta> {
+  const meta = await getAppMeta(appId, ops);
+  if (!canEditApp(meta, user)) throw forbidden("You need edit access to this app. Ask its owner for an editor invite link.");
+  return meta;
+}
+
+/** The owner, or someone who accepted an invite (matched by account id, never by email). */
 export function isAppAdmin(meta: AppMeta, user: User | null): boolean {
   if (!user) return false;
-  return user.id === meta.ownerId || (meta.adminIds || []).includes(user.id);
+  return user.id === meta.ownerId || (meta.adminIds || []).includes(user.id) || (meta.editorIds || []).includes(user.id);
 }
 
 export function viewerFor(meta: AppMeta, user: User | null): Viewer {
@@ -259,8 +287,8 @@ export async function createApp(user: User, input: { name?: unknown; templateId?
 export async function saveDraft(user: User, appId: string, rawDoc: unknown, baseRevision?: number) {
   const doc = sanitizeDoc(rawDoc);
   const store = await getStore();
-  return store.transaction(async (tx) => {
-    const meta = await getOwnedApp(user, appId, tx);
+  const saved = await withAppLock(appId, () => store.transaction(async (tx) => {
+    const meta = await getEditableApp(user, appId, tx);
     const draft = await tx.get<DraftDoc>("drafts", appId);
     const current = draft?.revision ?? 0;
     if (typeof baseRevision === "number" && baseRevision < current)
@@ -273,13 +301,74 @@ export async function saveDraft(user: User, appId: string, rawDoc: unknown, base
     meta.kind = doc.settings.kind === "mobile" ? "mobile" : "website";
     await tx.put("apps", meta);
     return { revision, updatedAt };
+  }));
+  // a whole-document save: anyone else with the editor open reloads it
+  await publish(appId, { type: "reload", rev: saved.revision, clientId: null });
+  return saved;
+}
+
+/** Deterministic JSON (sorted keys) so equal values compare equal whatever their key order. */
+function stableJson(v: unknown): string {
+  if (v === null || typeof v !== "object") return JSON.stringify(v ?? null) ?? "null";
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
+  const o = v as Record<string, unknown>;
+  return `{${Object.keys(o).filter((k) => o[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${stableJson(o[k])}`).join(",")}}`;
+}
+
+/**
+ * Live collaboration: apply some units of the design (see lib/shared/sync.ts), repair the
+ * result, save it as the next revision and tell everyone with the editor open. The event lists
+ * what actually changed on the server, which submitted units were accepted, and which of those
+ * the server had to adjust (so the sender adopts the server's version).
+ */
+export async function applyLiveChanges(user: User, appId: string, clientId: string, changes: Change[]) {
+  const store = await getStore();
+  return withAppLock(appId, async () => {
+    const result = await store.transaction(async (tx) => {
+      const meta = await getEditableApp(user, appId, tx);
+      const draft = await tx.get<DraftDoc>("drafts", appId);
+      if (!draft) throw notFound("That app's design is missing.");
+      let clean: AppDoc;
+      try {
+        clean = sanitizeDoc(applyChanges(draft.doc, changes));
+      } catch (err) {
+        throw badRequest(err instanceof Error ? err.message : "That change isn't valid.");
+      }
+      const before = new Map(unitEntries(draft.doc).map(([k, v]) => [k, stableJson(v)]));
+      const after = new Map<string, string>();
+      const out: Change[] = [];
+      for (const [k, v] of unitEntries(clean)) {
+        const json = stableJson(v);
+        after.set(k, json);
+        if (before.get(k) !== json) out.push({ k, v });
+      }
+      for (const k of before.keys()) if (!after.has(k)) out.push({ k, v: null });
+      const accepted = changes.map((c) => c.k);
+      const adjusted = changes.filter((c) => (after.get(c.k) ?? "null") !== stableJson(c.v)).map((c) => c.k);
+      if (!out.length) return { rev: draft.revision, accepted, adjusted, event: null };
+      const revision = draft.revision + 1;
+      const updatedAt = nowIso();
+      await tx.put("drafts", { id: appId, doc: clean, revision, updatedAt } satisfies DraftDoc);
+      const kind = clean.settings.kind === "mobile" ? "mobile" : "website";
+      // the app list shows when an app was edited: no need to rewrite it on every keystroke
+      if (Date.now() - Date.parse(meta.updatedAt) > 30_000 || meta.kind !== kind) {
+        meta.updatedAt = updatedAt;
+        meta.revision = revision;
+        meta.kind = kind;
+        await tx.put("apps", meta);
+      }
+      const event = { type: "change" as const, rev: revision, clientId, userId: user.id, changes: out, accepted, adjusted };
+      return { rev: revision, accepted, adjusted, event };
+    });
+    if (result.event) await publish(appId, result.event);
+    return result;
   });
 }
 
 export async function updateAppMeta(user: User, appId: string, patch: Record<string, unknown>) {
   const store = await getStore();
   return store.transaction(async (tx) => {
-    const meta = await getOwnedApp(user, appId, tx);
+    const meta = await getEditableApp(user, appId, tx);
     if (patch.name !== undefined) meta.name = cleanAppName(patch.name);
     if (typeof patch.description === "string") meta.description = patch.description.trim().slice(0, 300);
     if (typeof patch.emoji === "string" && patch.emoji.trim()) meta.emoji = Array.from(patch.emoji.trim()).slice(0, 2).join("");
@@ -387,7 +476,7 @@ export async function duplicateApp(user: User, appId: string) {
 /* ------------------------------------------------------------------ versions */
 
 export async function listVersions(user: User, appId: string) {
-  await getOwnedApp(user, appId);
+  await getEditableApp(user, appId);
   const store = await getStore();
   const versions = await store.find<AppVersion>("versions", "appId", appId);
   return versions.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(({ doc: _doc, ...v }) => v);
@@ -396,7 +485,7 @@ export async function listVersions(user: User, appId: string) {
 export async function saveVersion(user: User, appId: string, label: unknown) {
   const store = await getStore();
   return store.transaction(async (tx) => {
-    await getOwnedApp(user, appId, tx);
+    await getEditableApp(user, appId, tx);
     const draft = await tx.get<DraftDoc>("drafts", appId);
     if (!draft) throw notFound();
     const existing = await tx.find<AppVersion>("versions", "appId", appId);
@@ -418,25 +507,30 @@ export async function saveVersion(user: User, appId: string, label: unknown) {
   });
 }
 
-export async function restoreVersion(user: User, appId: string, versionId: string) {
+export async function restoreVersion(user: User, appId: string, versionId: string, clientId: string | null = null) {
   const store = await getStore();
-  return store.transaction(async (tx) => {
-    const meta = await getOwnedApp(user, appId, tx);
-    const v = await tx.get<AppVersion>("versions", versionId);
-    if (!v || v.appId !== appId) throw notFound("That version doesn't exist anymore.");
-    const draft = await tx.get<DraftDoc>("drafts", appId);
-    const revision = (draft?.revision ?? 0) + 1;
-    await tx.put("drafts", { id: appId, doc: v.doc, revision, updatedAt: nowIso() } satisfies DraftDoc);
-    meta.revision = revision;
-    meta.updatedAt = nowIso();
-    await tx.put("apps", meta);
-    return { doc: v.doc, revision };
-  });
+  const restored = await withAppLock(appId, () =>
+    store.transaction(async (tx) => {
+      const meta = await getEditableApp(user, appId, tx);
+      const v = await tx.get<AppVersion>("versions", versionId);
+      if (!v || v.appId !== appId) throw notFound("That version doesn't exist anymore.");
+      const draft = await tx.get<DraftDoc>("drafts", appId);
+      const revision = (draft?.revision ?? 0) + 1;
+      await tx.put("drafts", { id: appId, doc: v.doc, revision, updatedAt: nowIso() } satisfies DraftDoc);
+      meta.revision = revision;
+      meta.updatedAt = nowIso();
+      await tx.put("apps", meta);
+      return { doc: v.doc, revision };
+    }),
+  );
+  // everyone else with the editor open switches to the restored design
+  await publish(appId, { type: "reload", rev: restored.revision, clientId });
+  return restored;
 }
 
 export async function deleteVersion(user: User, appId: string, versionId: string) {
   const store = await getStore();
-  await getOwnedApp(user, appId);
+  await getEditableApp(user, appId);
   const v = await store.get<AppVersion>("versions", versionId);
   if (!v || v.appId !== appId) throw notFound();
   await store.delete("versions", versionId);
@@ -465,7 +559,9 @@ export async function checkSlug(appId: string, raw: string) {
 export async function publishApp(user: User, appId: string, input: { slug?: unknown; explore?: unknown; description?: unknown; expectedRevision?: unknown; mobileTarget?: unknown }) {
   const store = await getStore();
   return store.transaction(async (tx) => {
-    const meta = await getOwnedApp(user, appId, tx);
+    const meta = await getEditableApp(user, appId, tx);
+    // phone builds belong to the owner (they alone see and manage them)
+    if (input.mobileTarget !== undefined && meta.ownerId !== user.id) throw forbidden("Only the app's owner can start phone builds.");
     if (meta.takenDown) throw forbidden(`The site's operators took this app offline (${meta.takenDown.reason}). To appeal, contact ${contactLine()}.`);
     const draft = await tx.get<DraftDoc>("drafts", appId);
     if (!draft) throw notFound();
@@ -496,7 +592,7 @@ export async function publishApp(user: User, appId: string, input: { slug?: unkn
 export async function unpublishApp(user: User, appId: string) {
   const store = await getStore();
   return store.transaction(async (tx) => {
-    const meta = await getOwnedApp(user, appId, tx);
+    const meta = await getEditableApp(user, appId, tx);
     meta.published = null;
     await stopAppDeployments(tx, appId, "The app was unpublished. Start a new phone test after publishing it again.");
     await tx.put("apps", meta);

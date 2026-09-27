@@ -21,7 +21,9 @@ export type Table =
   /** reports of abusive or illegal apps */
   | "reports"
   | "mobileDeployments"
-  | "mobileWorkers";
+  | "mobileWorkers"
+  /** live-collaboration events too big for a Postgres notification (kept for an hour) */
+  | "live";
 
 export interface Doc {
   id: string;
@@ -53,6 +55,7 @@ export const INDEXES: Record<Table, Record<string, (doc: any) => string | null |
   reports: { appId: (d) => d.appId ?? null, status: (d) => d.status },
   mobileDeployments: { appId: (d) => d.appId, status: (d) => d.status },
   mobileWorkers: {},
+  live: { appId: (d) => d.appId },
 };
 
 /** Values that must be unique across a table (enforced by the database with Postgres). */
@@ -87,4 +90,7 @@ export interface Store extends StoreOps {
   deleteBlob(id: string): Promise<void>;
   /** Every document of a table (maintenance jobs only). */
   scan<T extends Doc>(table: Table): Promise<T[]>;
+  /** Postgres only: tell every server something happened (LISTEN/NOTIFY). */
+  notify?(channel: string, payload: string): Promise<void>;
+  listen?(channel: string, onMessage: (payload: string) => void): Promise<void>;
 }

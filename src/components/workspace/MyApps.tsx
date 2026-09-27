@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Copy, ExternalLink, Eye, LayoutGrid, Monitor, MoreHorizontal, Pencil, Plus, Search, Smartphone, Sparkles, Trash2 } from "lucide-react";
+import { Copy, ExternalLink, Eye, LayoutGrid, Monitor, MoreHorizontal, Pencil, Plus, Search, Smartphone, Sparkles, Trash2, Users } from "lucide-react";
 import type { AppMeta } from "@/lib/shared/types";
 import type { TemplateCard } from "@/lib/server/templateCards";
 import { relativeTime } from "@/lib/shared/util";
@@ -16,6 +16,58 @@ import { MiniPreview, type PreviewData } from "./MiniPreview";
 import { CreateAppDialog } from "./CreateAppDialog";
 
 export type AppListItem = AppMeta & { preview: PreviewData | null; pageCount: number };
+
+export interface SharedApp {
+  id: string;
+  name: string;
+  emoji: string;
+  color: string;
+  slug: string | null;
+  role: "editor" | "admin";
+  updatedAt: string;
+}
+
+/** Apps other people shared with you: editors open the editor, admins the live app. */
+function SharedWithYou({ apps }: { apps: SharedApp[] }) {
+  if (!apps.length) return null;
+  return (
+    <section className="shared-apps">
+      <div className="section-head">
+        <h2>
+          <Users size={18} /> Shared with you <span className="badge">{apps.length}</span>
+        </h2>
+      </div>
+      <div className="shared-list">
+        {apps.map((a) => {
+          const href = a.role === "editor" ? `/editor/${a.id}` : a.slug ? appUrl(a.slug) : null;
+          const body = (
+            <>
+              <span className="app-icon" style={{ background: `${a.color}1f` }}>
+                {a.emoji}
+              </span>
+              <span className="shared-meta">
+                <strong>{a.name}</strong>
+                <small suppressHydrationWarning>
+                  {a.role === "editor" ? "You can edit" : "You're an admin of the live app"} · edited {relativeTime(a.updatedAt)}
+                </small>
+              </span>
+              {a.role === "editor" ? <Pencil size={16} /> : <ExternalLink size={16} />}
+            </>
+          );
+          return href ? (
+            <a key={a.id} className="shared-item" href={href}>
+              {body}
+            </a>
+          ) : (
+            <span key={a.id} className="shared-item disabled" title="This app isn't published right now.">
+              {body}
+            </span>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
 
 export function AppCard({ app, onRename, onDuplicate, onDelete }: { app: AppListItem; onRename: () => void; onDuplicate: () => void; onDelete: () => void }) {
   const router = useRouter();
@@ -74,7 +126,7 @@ export function AppCard({ app, onRename, onDuplicate, onDelete }: { app: AppList
   );
 }
 
-export function MyApps({ initialApps, userName, templates }: { initialApps: AppListItem[]; userName: string; templates: TemplateCard[] }) {
+export function MyApps({ initialApps, userName, templates, shared = [] }: { initialApps: AppListItem[]; userName: string; templates: TemplateCard[]; shared?: SharedApp[] }) {
   const router = useRouter();
   const [apps, setApps] = useState(initialApps);
   const [query, setQuery] = useState("");
@@ -250,6 +302,8 @@ export function MyApps({ initialApps, userName, templates }: { initialApps: AppL
           ))}
         </div>
       )}
+
+      <SharedWithYou apps={shared} />
 
       <CreateAppDialog
         open={!!creating}
