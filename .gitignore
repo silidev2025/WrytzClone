@@ -1,0 +1,27 @@
+# dependencies
+/node_modules
+/mobile/expo/node_modules/
+/mobile/expo/.expo/
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+*.tsbuildinfo
+
+# local database + uploaded media (created on first run)
+/.data/
+
+# env files
+.env
+.env.local
+.env.*.local
+
+# misc
+.DS_Store
+npm-debug.log*
+
+# backups of the data folder (they contain accounts and app data)
+/backups/
+
+.vercel

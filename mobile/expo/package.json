@@ -1,0 +1,19 @@
+{
+  "name": "craftbase-ios-preview",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "overrides": {
+    "@expo/ngrok": { "uuid": "11.1.1" },
+    "xcode": { "uuid": "11.1.1" }
+  },
+  "dependencies": {
+    "expo": "57.0.25",
+    "expo-constants": "~57.0.19",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-webview": "13.16.1",
+    "@expo/ngrok": "4.1.3"
+  }
+}
