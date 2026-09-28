@@ -27,7 +27,7 @@ export function AccessDialog({ open, onClose, collection, onSave }: { open: bool
       onClose={onClose}
       size="wide"
       icon={
-        <span className="empty-icon" style={{ width: 42, height: 42, borderRadius: 12 }}>
+        <span className="empty-icon">
           <ShieldCheck size={20} />
         </span>
       }

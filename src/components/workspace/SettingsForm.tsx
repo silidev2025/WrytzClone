@@ -66,7 +66,6 @@ export function SettingsForm({ user }: { user: PublicUser }) {
       <div className="crumbs">Workspace / Settings</div>
       <div className="page-head">
         <div>
-          <div className="eyebrow">Settings</div>
           <h1 className="page-title">Your account</h1>
           <p className="page-sub">Manage your profile, password and how the workspace looks.</p>
         </div>

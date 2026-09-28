@@ -61,7 +61,7 @@ export function MiniPreview({ preview, frameWidth }: { preview: PreviewData; fra
     <div ref={ref} style={{ position: "absolute", inset: 0, overflow: "hidden", background: phone ? mix(surface, "#000000", 0.05) : bg }} aria-hidden="true">
       {size.w > 0 && (
         <RuntimeContext.Provider value={store}>
-          {phone && <div style={{ position: "absolute", top: 0, bottom: 0, left, width: fw * scale, background: bg, boxShadow: "0 0 0 1px rgba(0,0,0,0.05), 0 8px 30px -10px rgba(0,0,0,0.25)" }} />}
+          {phone && <div style={{ position: "absolute", top: 0, bottom: 0, left, width: fw * scale, background: bg, boxShadow: "0 0 0 1px #000" }} />}
           <div className="mini-preview" style={{ width: fw, position: "absolute", top: 0, left, transform: `scale(${scale})` }}>
             <PageFrame />
           </div>

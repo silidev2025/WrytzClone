@@ -25,7 +25,7 @@ export function VariablesEditor() {
     <div style={{ display: "grid", gap: 8 }}>
       {!variables.length && <div className="mini-note">Variables remember things while someone uses your app — like a score, a chosen colour or a step number. Show one with {"{{vars.name}}"}.</div>}
       {variables.map((v) => (
-        <div key={v.id} style={{ display: "grid", gap: 5, padding: 8, border: "1px solid var(--line)", borderRadius: 10 }}>
+        <div key={v.id} style={{ display: "grid", gap: 5, padding: 8, border: "1.5px solid var(--ink)", borderRadius: 4 }}>
           <div style={{ display: "flex", gap: 4 }}>
             <div style={{ flex: 1 }}>
               <TextField

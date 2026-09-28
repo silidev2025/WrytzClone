@@ -384,7 +384,7 @@ export function ContentTab({ el, theme }: { el: El; theme: Theme }) {
         <Section title="Shape">
           <div className="icon-grid" style={{ gridTemplateColumns: "repeat(7, 1fr)" }}>
             {SHAPES.map((s) => (
-              <button key={s.value} title={s.label} style={{ background: (p.shape || "rect") === s.value ? "var(--brand-soft)" : undefined, cursor: "pointer" }} onClick={() => set({ shape: s.value })}>
+              <button key={s.value} title={s.label} aria-label={s.label} aria-pressed={(p.shape || "rect") === s.value} style={{ cursor: "pointer" }} onClick={() => set({ shape: s.value })}>
                 <Icon name={s.icon} size={18} />
               </button>
             ))}

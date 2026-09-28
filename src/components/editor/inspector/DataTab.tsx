@@ -399,7 +399,7 @@ export function DataTab({ el }: { el: El }) {
                       updateEls([el.id], (x) => void (x.props.columns = next.map((field) => ({ field }))));
                     }}
                   />
-                  <span className="field-type-chip" style={{ background: `${FIELD_TYPE_MAP[f.type].color}22`, color: FIELD_TYPE_MAP[f.type].color }}>
+                  <span className="field-type-chip">
                     <Icon name={FIELD_TYPE_MAP[f.type].icon} size={12} />
                   </span>
                   {f.name}

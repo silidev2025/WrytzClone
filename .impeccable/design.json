@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-28T23:30:00Z",
+  "title": "Design System: Craftbase",
+  "extensions": {
+    "colorMeta": {
+      "paper": { "role": "neutral", "displayName": "Card Paper", "canonical": "#ffffff", "tonalRamp": ["#262626", "#404040", "#595959", "#808080", "#a6a6a6", "#cccccc", "#ededed", "#ffffff"] },
+      "ink": { "role": "primary", "displayName": "Stack Ink", "canonical": "#000000", "tonalRamp": ["#000000", "#1a1a1a", "#333333", "#555555", "#737373", "#a3a3a3", "#c2c2c2", "#ededed"] },
+      "ink-soft": { "role": "neutral", "displayName": "Soft Ink", "canonical": "#1a1a1a", "tonalRamp": ["#0d0d0d", "#1a1a1a", "#333333", "#555555", "#737373", "#a3a3a3", "#c2c2c2", "#ededed"] },
+      "muted": { "role": "neutral", "displayName": "Graphite", "canonical": "#555555", "tonalRamp": ["#1a1a1a", "#333333", "#444444", "#555555", "#737373", "#a3a3a3", "#c2c2c2", "#ededed"] },
+      "faint": { "role": "neutral", "displayName": "Pencil", "canonical": "#737373", "tonalRamp": ["#262626", "#404040", "#595959", "#737373", "#8c8c8c", "#a6a6a6", "#c2c2c2", "#ededed"] },
+      "hover-wash": { "role": "neutral", "displayName": "Hover Wash", "canonical": "#ededed", "tonalRamp": ["#262626", "#404040", "#737373", "#a3a3a3", "#c2c2c2", "#dcdcdc", "#ededed", "#f7f7f7"] },
+      "hairline": { "role": "neutral", "displayName": "Hairline", "canonical": "#c2c2c2", "tonalRamp": ["#262626", "#404040", "#595959", "#808080", "#a6a6a6", "#c2c2c2", "#dcdcdc", "#ededed"] },
+      "night-paper": { "role": "neutral", "displayName": "Night Paper", "canonical": "#000000", "tonalRamp": ["#000000", "#1a1a1a", "#1f1f1f", "#333333", "#4d4d4d", "#737373", "#949494", "#b3b3b3"] },
+      "night-ink": { "role": "primary", "displayName": "Night Ink", "canonical": "#ffffff", "tonalRamp": ["#4d4d4d", "#737373", "#949494", "#b3b3b3", "#cccccc", "#ebebeb", "#f5f5f5", "#ffffff"] },
+      "night-hover-wash": { "role": "neutral", "displayName": "Night Hover Wash", "canonical": "#1f1f1f", "tonalRamp": ["#000000", "#0d0d0d", "#1f1f1f", "#333333", "#4d4d4d", "#737373", "#949494", "#b3b3b3"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "The landing headline only; Pixelify Sans 700 with balanced wrapping." },
+      "headline": { "displayName": "Headline", "purpose": "Workspace page titles (36px, 28px on phones); section heroes run 38px." },
+      "title": { "displayName": "Title", "purpose": "Window and dialog title bars, card-stack and database titles, settings section heads." },
+      "label": { "displayName": "Label", "purpose": "Buttons, menus, tabs, nav items and badges; always Pixelify Sans." },
+      "body": { "displayName": "Body", "purpose": "Everything people read, in Atkinson Hyperlegible Next." },
+      "mono": { "displayName": "Mono", "purpose": "Counts, sizes, zoom levels, coordinates, keycaps and web addresses, with tabular numerals." }
+    },
+    "shadows": [
+      { "name": "window", "value": "2px 2px 0 var(--ink)", "purpose": "Windows, dialogs, popovers, the floating canvas zoom control and cards lifted on hover." },
+      { "name": "stack-edge-2", "value": "4px 4px 0 -2px var(--paper), 4px 4px 0 0 var(--ink)", "purpose": "An app with two pages shows one card edge behind it." },
+      { "name": "stack-edge-3", "value": "4px 4px 0 -2px var(--paper), 4px 4px 0 0 var(--ink), 8px 8px 0 -2px var(--paper), 8px 8px 0 0 var(--ink)", "purpose": "An app with three or more pages shows two card edges." },
+      { "name": "default-ring", "value": "inset 0 0 0 2px var(--paper)", "purpose": "The primary button on hover: the classic default-button ring." },
+      { "name": "focus-thicken", "value": "0 0 0 1px var(--ink), inset 0 0 0 1px var(--ink)", "purpose": "Focused fields grow a heavier frame instead of a glow." },
+      { "name": "canvas-page", "value": "0 0 0 2px var(--ink), 5px 5px 0 2px var(--ink)", "purpose": "The page being edited, lying on the canvas desk." }
+    ],
+    "motion": [
+      { "name": "ease", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Default easing for lifts and state changes." },
+      { "name": "state", "value": "120ms", "purpose": "Every hover, press and small state change; nothing else runs longer except the three signatures." },
+      { "name": "zoom-rects", "value": "4 outline rectangles, 60ms each, 32ms apart", "purpose": "Dialogs open by stepping outlines from the control that opened them." },
+      { "name": "marching-ants", "value": "0.6s linear infinite", "purpose": "Canvas selections and the landing demo's selection crawl." },
+      { "name": "dissolve", "value": "0.26s stepped through the 12/25/50/75% dithers", "purpose": "Landing stack cards dissolve in when flipped." },
+      { "name": "reduced-motion", "value": "prefers-reduced-motion: reduce", "purpose": "Removes all three signature motions." }
+    ],
+    "breakpoints": [
+      { "name": "tiny-phone", "value": "380px" },
+      { "name": "editor-compact-bar", "value": "560px" },
+      { "name": "phone", "value": "640px" },
+      { "name": "editor-floating-panels", "value": "860px" },
+      { "name": "workspace-drawer", "value": "900px" },
+      { "name": "landing-single-column", "value": "960px" },
+      { "name": "editor-narrow-panels", "value": "1100px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one main action on a surface: ink fill, paper Pixelify label, default ring on hover.",
+      "html": "<button class=\"ds-btn-primary\">Start building <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 12h14\"/><path d=\"m12 5 7 7-7 7\"/></svg></button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border: 2px solid var(--ink, #000); border-radius: 6px; background: var(--ink, #000); color: var(--paper, #fff); font-family: var(--font-display, 'Pixelify Sans', sans-serif); font-weight: 500; font-size: 15px; line-height: 1; cursor: pointer; transition: box-shadow 0.12s; } .ds-btn-primary:hover { box-shadow: inset 0 0 0 2px var(--paper, #fff); } .ds-btn-primary:focus-visible { outline: 2px solid var(--ink, #000); outline-offset: 2px; } .ds-btn-primary:active { box-shadow: inset 0 0 0 3px var(--paper, #fff); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Every other action: paper fill, ink frame; hover washes, pressing inverts.",
+      "html": "<button class=\"ds-btn\">Browse templates</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border: 2px solid var(--ink, #000); border-radius: 6px; background: var(--paper, #fff); color: var(--ink, #000); font-family: var(--font-display, 'Pixelify Sans', sans-serif); font-weight: 500; font-size: 15px; line-height: 1; cursor: pointer; transition: background-color 0.12s, color 0.12s; } .ds-btn:hover { background: var(--panel-3, #ededed); } .ds-btn:active { background: var(--ink, #000); color: var(--paper, #fff); } .ds-btn:focus-visible { outline: 2px solid var(--ink, #000); outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "2px ink frame; focus thickens the frame instead of glowing.",
+      "html": "<input class=\"ds-input\" placeholder=\"you@example.com\" aria-label=\"Email\" />",
+      "css": ".ds-input { width: 280px; height: 38px; padding: 0 11px; border: 2px solid var(--ink, #000); border-radius: 4px; background: var(--paper, #fff); color: var(--ink, #000); font-family: var(--font, 'Atkinson Hyperlegible Next', sans-serif); font-size: 14.5px; outline: none; caret-color: var(--ink, #000); } .ds-input::placeholder { color: var(--faint, #737373); } .ds-input:focus { box-shadow: 0 0 0 1px var(--ink, #000), inset 0 0 0 1px var(--ink, #000); }"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "custom",
+      "refersTo": "button-secondary-active",
+      "description": "Framed row of choices; the chosen one is inverted.",
+      "html": "<div class=\"ds-seg\" role=\"group\" aria-label=\"Filter\"><button aria-pressed=\"true\">All</button><button aria-pressed=\"false\">Drafts</button><button aria-pressed=\"false\">Published</button></div>",
+      "css": ".ds-seg { display: inline-flex; border: 2px solid var(--ink, #000); border-radius: 6px; overflow: hidden; background: var(--paper, #fff); } .ds-seg button { height: 28px; padding: 0 11px; border: 0; background: transparent; color: var(--ink, #000); font-family: var(--font-display, 'Pixelify Sans', sans-serif); font-size: 14.5px; font-weight: 500; cursor: pointer; } .ds-seg button + button { border-left: 2px solid var(--ink, #000); } .ds-seg button:hover { background: var(--panel-3, #ededed); } .ds-seg button[aria-pressed='true'] { background: var(--ink, #000); color: var(--paper, #fff); } .ds-seg button:focus-visible { outline: 2px solid var(--ink, #000); outline-offset: -4px; }"
+    },
+    {
+      "name": "Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Small framed label; status badges invert, problem badges go dashed.",
+      "html": "<span class=\"ds-badge\">Draft</span> <span class=\"ds-badge ds-badge-on\">Live</span> <span class=\"ds-badge ds-badge-danger\">Taken down</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; height: 22px; padding: 0 7px; border: 1.5px solid var(--ink, #000); border-radius: 4px; background: var(--paper, #fff); color: var(--ink, #000); font-family: var(--font-display, 'Pixelify Sans', sans-serif); font-size: 13px; font-weight: 500; } .ds-badge-on { background: var(--ink, #000); color: var(--paper, #fff); } .ds-badge-danger { border-style: dashed; }"
+    },
+    {
+      "name": "Contents Nav Item",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Workspace contents list: Pixelify label, mono count, the current page inverted.",
+      "html": "<nav class=\"ds-nav\"><a class=\"is-active\" href=\"#\"><svg width=\"19\" height=\"19\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><rect x=\"3\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/><rect x=\"14\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/><rect x=\"3\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"/><rect x=\"14\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"/></svg>My apps<span>3</span></a><a href=\"#\"><svg width=\"19\" height=\"19\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"m16.2 7.8-2.1 6.3-6.3 2.1 2.1-6.3z\"/></svg>Explore</a></nav>",
+      "css": ".ds-nav { display: grid; gap: 2px; width: 224px; } .ds-nav a { display: flex; align-items: center; gap: 11px; min-height: 38px; padding: 0 10px; border-radius: 4px; color: var(--ink, #000); text-decoration: none; font-family: var(--font-display, 'Pixelify Sans', sans-serif); font-size: 16px; font-weight: 500; } .ds-nav a:hover { background: var(--panel-3, #ededed); } .ds-nav a.is-active { background: var(--ink, #000); color: var(--paper, #fff); } .ds-nav a span { margin-left: auto; font-family: var(--mono, monospace); font-size: 12.5px; font-variant-numeric: tabular-nums; } .ds-nav a:focus-visible { outline: 2px solid var(--ink, #000); outline-offset: 2px; }"
+    },
+    {
+      "name": "Window",
+      "kind": "card",
+      "refersTo": "window-title-bar",
+      "description": "Every page and dialog: inverted title bar, 2px frame, 8px corners, hard 2px shadow, sitting on the dither desk.",
+      "html": "<div class=\"ds-desk\"><section class=\"ds-window\"><div class=\"ds-window-bar\">Workspace / My apps</div><div class=\"ds-window-body\"><h2>Hi Maya, what are we building today?</h2><p>Design screens visually, connect a database, and share a working app.</p></div></section></div>",
+      "css": ".ds-desk { padding: 24px; background-color: var(--paper, #fff); background-image: var(--dither-12); background-size: 4px 4px; } .ds-window { max-width: 460px; background: var(--paper, #fff); border: 2px solid var(--ink, #000); border-radius: 8px; box-shadow: 2px 2px 0 var(--ink, #000); } .ds-window-bar { display: flex; align-items: center; min-height: 38px; padding: 0 16px; background: var(--ink, #000); color: var(--paper, #fff); font-family: var(--font-display, 'Pixelify Sans', sans-serif); font-size: 15.5px; border-radius: 6px 6px 0 0; } .ds-window-body { padding: 20px 22px 24px; } .ds-window-body h2 { margin: 0 0 8px; font-family: var(--font-display, 'Pixelify Sans', sans-serif); font-size: 26px; font-weight: 600; line-height: 1.15; } .ds-window-body p { margin: 0; color: var(--ink-2, #1a1a1a); font-family: var(--font, sans-serif); font-size: 14.5px; line-height: 1.5; }"
+    },
+    {
+      "name": "App Stack Card",
+      "kind": "card",
+      "refersTo": "button-secondary",
+      "description": "Signature: an app is a stack of cards; extra pages show as offset card edges; the card lifts 2px on hover.",
+      "html": "<article class=\"ds-stack\" tabindex=\"0\"><div class=\"ds-stack-thumb\"></div><div class=\"ds-stack-body\"><strong>Kape Corner</strong><small>Mobile app · Draft · edited just now</small></div></article>",
+      "css": ".ds-stack { width: 260px; margin: 0 8px 8px 0; background: var(--paper, #fff); border: 2px solid var(--ink, #000); border-radius: 8px; overflow: hidden; box-shadow: 4px 4px 0 -2px var(--paper, #fff), 4px 4px 0 0 var(--ink, #000), 8px 8px 0 -2px var(--paper, #fff), 8px 8px 0 0 var(--ink, #000); transition: transform 0.12s cubic-bezier(0.16, 1, 0.3, 1); } .ds-stack:hover, .ds-stack:focus-visible { transform: translate(-2px, -2px); outline: none; } .ds-stack-thumb { aspect-ratio: 16 / 10; background: #efe6da; border-bottom: 2px solid var(--ink, #000); } .ds-stack-body { display: grid; gap: 2px; padding: 12px 12px 12px 14px; } .ds-stack-body strong { font-family: var(--font-display, 'Pixelify Sans', sans-serif); font-size: 16px; font-weight: 600; } .ds-stack-body small { color: var(--ink-2, #1a1a1a); font-family: var(--font, sans-serif); font-size: 12.5px; }"
+    },
+    {
+      "name": "Marching Ants Selection",
+      "kind": "custom",
+      "refersTo": "window-title-bar",
+      "description": "Signature: canvas selections crawl in alternating ink and paper dashes, with black square handles and an inverted name tag.",
+      "html": "<div class=\"ds-sel\"><span class=\"ds-sel-name\">Heading</span><i class=\"ds-h tl\"></i><i class=\"ds-h tr\"></i><i class=\"ds-h bl\"></i><i class=\"ds-h br\"></i>Order your favourite bakes</div>",
+      "css": ".ds-sel { position: relative; display: inline-block; margin: 28px 12px 12px; padding: 8px 12px; font-family: Georgia, serif; font-size: 22px; background-image: linear-gradient(90deg, var(--ink, #000) 50%, var(--paper, #fff) 50%), linear-gradient(90deg, var(--ink, #000) 50%, var(--paper, #fff) 50%), linear-gradient(0deg, var(--ink, #000) 50%, var(--paper, #fff) 50%), linear-gradient(0deg, var(--ink, #000) 50%, var(--paper, #fff) 50%); background-repeat: repeat-x, repeat-x, repeat-y, repeat-y; background-size: 8px 2px, 8px 2px, 2px 8px, 2px 8px; background-position: 0 0, 0 100%, 0 0, 100% 0; animation: ds-ants 0.6s linear infinite; } @keyframes ds-ants { to { background-position: 8px 0, -8px 100%, 0 -8px, 100% 8px; } } @media (prefers-reduced-motion: reduce) { .ds-sel { animation: none; } } .ds-sel-name { position: absolute; left: -2px; bottom: 100%; margin-bottom: 4px; padding: 0 6px; background: var(--ink, #000); color: var(--paper, #fff); font-family: var(--font-display, 'Pixelify Sans', sans-serif); font-size: 12px; line-height: 1.6; } .ds-h { position: absolute; width: 9px; height: 9px; background: var(--ink, #000); border: 1.5px solid var(--paper, #fff); } .ds-h.tl { left: -5px; top: -5px; } .ds-h.tr { right: -5px; top: -5px; } .ds-h.bl { left: -5px; bottom: -5px; } .ds-h.br { right: -5px; bottom: -5px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Shoebox of Stacks",
+    "overview": "Craftbase's own interface is a HyperCard stack: black ink on white paper, pages as cards, every app a stack of them lying on a dotted desk. The chrome has no hue at all. That is deliberate: the apps people build are full of colour, and a colourless builder lets their work be the only colour on screen. Greys exist only as one-bit dither patterns, or as a single flat hover wash where a pattern would fight text.\n\nThe world is dense and tool-like in the editor and calm and legible everywhere a beginner reads. Frames are drawn, not implied: 2px ink lines with small corners. Selection is shown by inversion, the way a stack highlights a button or a list row. Depth comes from hard 2px offsets on things that float and from stacked card edges on things that have pages, never from blur. Three moments of motion carry the personality: dialogs zoom out of the control that opened them as outline rectangles, canvas selections march, and the landing's cards dissolve through the dither densities.\n\nIt rejects the builder category's defaults: purple gradients, icon-tile card grids, soft-shadow SaaS chrome and kicker labels above headings.",
+    "keyCharacteristics": [
+      "One-bit chrome: ink (#000000) on paper (#ffffff); dark mode is the same world inverted.",
+      "Greys only as ordered dither (12%, 25%, 50%, 75%) plus one flat hover wash.",
+      "2px ink frames, 4/6/8px corners, inverted selected and pressed states.",
+      "Pixelify Sans for menus, buttons and titles; Atkinson Hyperlegible for reading; its mono for numbers.",
+      "Pages sit as titled windows on a dithered desk; apps show their page count as card edges.",
+      "Signature motion: zoom rects, marching ants, dither dissolve. All three leave under reduced motion."
+    ],
+    "rules": [
+      { "name": "The One-Bit Rule", "body": "Craftbase's chrome is ink and paper. Greys are dither patterns or the one hover wash; hue belongs to the apps people build (their canvas, previews, thumbnails and chosen icons) and never to Craftbase itself.", "section": "colors" },
+      { "name": "The Inversion Rule", "body": "Selected, pressed, active and hovered-menu states invert to ink fill with paper text. They never tint.", "section": "colors" },
+      { "name": "The Dashed-Means-Trouble Rule", "body": "A dashed frame or dotted underline marks something destructive, locked or wrong: delete buttons, the danger zone, invalid fields, locked canvas items. Dashes are never decoration.", "section": "colors" },
+      { "name": "The Three Voices Rule", "body": "Pixelify Sans speaks for menus, buttons and titles. Atkinson Hyperlegible Next carries everything people read. The mono appears only on counts, sizes and addresses.", "section": "typography" },
+      { "name": "The No-Kicker Rule", "body": "Headings carry themselves. Nothing sits above a heading except a window's own title bar.", "section": "typography" },
+      { "name": "The Desk Rule", "body": "Pages, dialogs and cards sit on the dithered desk; the desk itself never carries text.", "section": "layout" },
+      { "name": "The Floating-Only Rule", "body": "A shadow means \"this floats\". Framed groups inside a window stay flat.", "section": "elevation" },
+      { "name": "The Stack Edge Rule", "body": "Depth that means \"more pages\" is drawn as offset card edges, at most three, never as blur.", "section": "elevation" },
+      { "name": "The Frame Rule", "body": "If it is a control or a container, it has a visible ink frame. Borderless controls appear only inside an already-framed group: segmented controls, menus and toolbars.", "section": "shapes" }
+    ],
+    "dos": [
+      "Do draw every control and container with a 2px ink frame and 4/6/8px corners.",
+      "Do show selected, pressed and active states by inverting to ink fill and paper text.",
+      "Do open workspace pages as windows on the 12% dither desk, with the breadcrumb as the title bar.",
+      "Do keep the apps people build in their own colours on the canvas, in previews, in thumbnails and in their chosen icons.",
+      "Do set counts, sizes and addresses in the mono with tabular numerals.",
+      "Do keep hover and state transitions at 120ms; only the three signature motions run longer, and reduced motion turns them off."
+    ],
+    "donts": [
+      "Don't use hue, gradients, blurred shadows or glass anywhere in the chrome.",
+      "Don't put a kicker or eyebrow label above a heading.",
+      "Don't use emoji or Unicode glyphs as chrome icons; icons are Lucide line icons. An app's own chosen emoji is content, not chrome.",
+      "Don't set running text in Pixelify Sans or in the mono.",
+      "Don't use dashed lines for decoration; dashes mean destructive, locked or invalid.",
+      "Don't give a shadow to anything that sits inside a window."
+    ]
+  }
+}

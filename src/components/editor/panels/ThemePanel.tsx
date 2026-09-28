@@ -118,7 +118,7 @@ export function ThemePanel() {
             style={{
               marginTop: 4,
               padding: 14,
-              borderRadius: 12,
+              borderRadius: Math.min(theme.radius, 16),
               background: theme.colors.background,
               border: `1px solid ${theme.colors.border}`,
               display: "grid",

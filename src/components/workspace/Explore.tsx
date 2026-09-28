@@ -64,7 +64,6 @@ export function Explore({ signedIn }: { signedIn: boolean }) {
     <div className="page">
       <div className="crumbs">Workspace / Explore</div>
       <section className="hero-panel">
-        <div className="eyebrow">A little inspiration goes a long way</div>
         <h1>Look what&apos;s possible.</h1>
         <p>Real apps made by curious people. Open one to try it, or remix it to start your own version.</p>
         <div className="hero-actions">
@@ -108,7 +107,7 @@ export function Explore({ signedIn }: { signedIn: boolean }) {
                 <Eye size={11} /> {a.visits}
               </span>
               <div className="app-card-body">
-                <span className="app-icon" style={{ background: `${a.color}1f` }}>
+                <span className="app-icon">
                   {a.emoji}
                 </span>
                 <div className="app-card-meta">

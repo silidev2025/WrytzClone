@@ -25,11 +25,14 @@ function VisitsChart({ daily }: { daily: AppMeta["stats"]["daily"] }) {
   const max = Math.max(1, ...days.map((x) => x.v));
   return (
     <svg viewBox="0 0 300 60" style={{ width: "100%", height: 60 }} role="img" aria-label="Visits over the last 30 days">
-      {days.map((x, i) => (
-        <rect key={x.d} x={i * 10 + 1} y={58 - (x.v / max) * 54} width={8} height={Math.max(1, (x.v / max) * 54)} rx={2} fill="var(--brand)" opacity={x.v ? 0.85 : 0.18}>
-          <title>{`${x.d}: ${x.v} visits, ${x.s} submissions`}</title>
-        </rect>
-      ))}
+      <line x1={0} x2={300} y1={59.5} y2={59.5} stroke="var(--ink)" strokeWidth={1} />
+      {days.map((x, i) =>
+        x.v ? (
+          <rect key={x.d} x={i * 10 + 1} y={59 - (x.v / max) * 54} width={8} height={(x.v / max) * 54} fill="var(--ink)">
+            <title>{`${x.d}: ${x.v} visits, ${x.s} submissions`}</title>
+          </rect>
+        ) : null,
+      )}
     </svg>
   );
 }
@@ -120,7 +123,7 @@ export function PublishDialog({ open, onClose }: { open: boolean; onClose: () =>
       size="wide"
       className="publish-dialog"
       icon={
-        <span className="empty-icon" style={{ width: 44, height: 44, borderRadius: 13, background: "var(--accent-grad)", color: "#fff" }}>
+        <span className="empty-icon">
           <Rocket size={20} />
         </span>
       }
@@ -151,7 +154,7 @@ export function PublishDialog({ open, onClose }: { open: boolean; onClose: () =>
         <div className="card publish-live-card" style={{ padding: 14, display: "grid", gap: 10, background: "var(--panel-2)" }}>
           <div className="publish-live-link" style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Globe size={16} color="var(--success)" />
-            <a href={url} target="_blank" rel="noopener" style={{ fontWeight: 650, color: "var(--brand-ink)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+            <a href={url} target="_blank" rel="noopener" style={{ fontWeight: 650, color: "var(--ink)", textDecoration: "underline", textUnderlineOffset: 3, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
               {url}
             </a>
             <button
@@ -170,10 +173,13 @@ export function PublishDialog({ open, onClose }: { open: boolean; onClose: () =>
           {outdated && <div className="alert info">You have changes that aren&apos;t live yet. Click “Publish update”.</div>}
           <div style={{ display: "flex", gap: 18, fontSize: 13 }}>
             <span>
-              <strong>{meta.stats.visits}</strong> visits
+              <strong className="num">{meta.stats.visits}</strong> visits
             </span>
             <span>
-              <strong>{meta.stats.submissions}</strong> submissions
+              <strong className="num">{meta.stats.submissions}</strong> submissions
+            </span>
+            <span className="mini-note" style={{ marginLeft: "auto" }}>
+              Visits, last 30 days
             </span>
           </div>
           <VisitsChart daily={meta.stats.daily} />

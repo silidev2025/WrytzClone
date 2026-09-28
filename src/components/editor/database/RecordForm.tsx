@@ -85,7 +85,7 @@ export function RecordForm({
         {collection.fields.map((f, i) => (
           <div key={f.id} className="field">
             <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span className="field-type-chip" style={{ background: `${FIELD_TYPE_MAP[f.type].color}22`, color: FIELD_TYPE_MAP[f.type].color }}>
+              <span className="field-type-chip">
                 <Icon name={FIELD_TYPE_MAP[f.type].icon} size={12} />
               </span>
               {f.name}

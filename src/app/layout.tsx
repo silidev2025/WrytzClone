@@ -2,14 +2,17 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./workspace.css";
 import "./runtime.css";
-import { Bricolage_Grotesque, Inter } from "next/font/google";
+import { Atkinson_Hyperlegible_Mono, Atkinson_Hyperlegible_Next, Pixelify_Sans } from "next/font/google";
 import { BRAND } from "@/lib/shared/brand";
 import { Toaster } from "@/components/ui/toast";
 import { DialogHost } from "@/components/ui/confirm";
 
-// served from this site (downloaded at build time), so visitors' browsers don't contact Google for them
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
-const bricolage = Bricolage_Grotesque({ subsets: ["latin"], weight: ["500", "600", "700", "800"], variable: "--font-bricolage", display: "swap" });
+// served from this site (downloaded at build time), so visitors' browsers don't contact Google for them.
+// Pixelify: menus, buttons and titles. Atkinson Hyperlegible: everything people read. Its mono: numbers and addresses.
+const pixel = Pixelify_Sans({ subsets: ["latin"], variable: "--font-pixel", display: "swap" });
+// Next has no fallback metrics for the Atkinson faces, so it can't size-match a fallback for them
+const text = Atkinson_Hyperlegible_Next({ subsets: ["latin"], variable: "--font-text", display: "swap", adjustFontFallback: false });
+const mono = Atkinson_Hyperlegible_Mono({ subsets: ["latin"], variable: "--font-mono", display: "swap", adjustFontFallback: false });
 
 export const metadata: Metadata = {
   title: { default: `${BRAND.name} — ${BRAND.tagline}`, template: `%s · ${BRAND.name}` },
@@ -19,7 +22,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#f6f5fb",
+  themeColor: "#ffffff",
 };
 
 // Apply the saved colour mode before the first paint (no flash of the wrong theme).
@@ -27,7 +30,7 @@ const colorModeScript = `try{var m=localStorage.getItem('cb-color-mode')||'light
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="light" className={`${inter.variable} ${bricolage.variable}`} suppressHydrationWarning>
+    <html lang="en" data-theme="light" className={`${pixel.variable} ${text.variable} ${mono.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: colorModeScript }} />
       </head>

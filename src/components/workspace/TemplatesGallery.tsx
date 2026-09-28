@@ -40,7 +40,6 @@ export function TemplatesGallery({ templates, signedIn }: { templates: TemplateC
     <div className="page">
       <div className="crumbs">Workspace / Templates</div>
       <section className="hero-panel">
-        <div className="eyebrow">Your ideas, brought to life</div>
         <h1>A head start for your next idea.</h1>
         <p>Every template is a working app — pages, a database and actions already wired up. Pick one, then make every detail yours.</p>
         <div className="hero-actions">
@@ -103,17 +102,15 @@ export function TemplatesGallery({ templates, signedIn }: { templates: TemplateC
               >
                 {t.preview ? <MiniPreview preview={t.preview} /> : <div className="thumb-fallback">{t.emoji}</div>}
               </div>
-              <span className="corner badge">
-                {t.kind === "mobile" && <Smartphone size={12} style={{ verticalAlign: -2, marginRight: 4 }} />}
-                {t.kind === "mobile" ? "Mobile app" : t.category}
-              </span>
               <div className="app-card-body">
-                <span className="app-icon" style={{ background: `${t.color}1f` }}>
+                <span className="app-icon">
                   {t.emoji}
                 </span>
                 <div className="app-card-meta">
                   <h3>{t.name}</h3>
-                  <p>{t.tagline}</p>
+                  <p>
+                    <span className="tpl-cat">{t.kind === "mobile" ? "Mobile app" : t.category}</span> · {t.tagline}
+                  </p>
                 </div>
                 <button className="icon-btn bordered" onClick={() => use(t.id)} aria-label={`Use ${t.name}`} title="Use this template">
                   <ArrowRight size={16} />
