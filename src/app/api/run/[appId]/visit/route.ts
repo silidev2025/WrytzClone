@@ -8,7 +8,7 @@ export const POST = route<Ctx>(async (req, { params }) => {
   const meta = await getAppMeta(appId);
   if (!meta.published) return { ok: true };
   try {
-    rateLimit(`visit:${appId}:${clientIp(req)}`, 30, 60_000);
+    await rateLimit(`visit:${appId}:${clientIp(req)}`, 30, 60_000);
   } catch {
     return { ok: true };
   }

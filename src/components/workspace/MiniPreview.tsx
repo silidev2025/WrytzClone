@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Component, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AppDoc, AppKind, Page, RuntimeRecord, Theme } from "@/lib/shared/types";
 import { FRAME_WIDTH } from "@/lib/shared/types";
 import { fillToCss, mix } from "@/lib/shared/theme";
@@ -26,7 +26,20 @@ const PHONE_VISIBLE_H = 700;
  * Phone apps show as a phone-width column in the middle unless `frameWidth` is given
  * (then the design is scaled to fill the width, e.g. block thumbnails).
  */
-export function MiniPreview({ preview, frameWidth }: { preview: PreviewData; frameWidth?: number }) {
+class PreviewBoundary extends Component<{ children: ReactNode; preview: PreviewData }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidUpdate(previous: Readonly<{ children: ReactNode; preview: PreviewData }>) {
+    if (this.state.failed && previous.preview !== this.props.preview) this.setState({ failed: false });
+  }
+  render() { return this.state.failed ? <div className="empty-state">Preview unavailable</div> : this.props.children; }
+}
+
+export function MiniPreview(props: { preview: PreviewData; frameWidth?: number }) {
+  return <PreviewBoundary preview={props.preview}><PreviewContent {...props} /></PreviewBoundary>;
+}
+
+function PreviewContent({ preview, frameWidth }: { preview: PreviewData; frameWidth?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const phoneDoc = preview.kind === "mobile";
@@ -56,7 +69,7 @@ export function MiniPreview({ preview, frameWidth }: { preview: PreviewData; fra
   // phone apps: a phone-width column showing the top of the screen, centred
   const scale = phone ? Math.min((size.h || size.w * 0.625) / PHONE_VISIBLE_H, size.w / fw) : size.w / fw;
   const left = phone ? Math.round((size.w - fw * scale) / 2) : 0;
-  const surface = preview.theme.colors.surface.startsWith("#") ? preview.theme.colors.surface : "#f3f3f7";
+  const surface = typeof preview.theme.colors.surface === "string" && preview.theme.colors.surface.startsWith("#") ? preview.theme.colors.surface : "#f3f3f7";
   return (
     <div ref={ref} style={{ position: "absolute", inset: 0, overflow: "hidden", background: phone ? mix(surface, "#000000", 0.05) : bg }} aria-hidden="true">
       {size.w > 0 && (

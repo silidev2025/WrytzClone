@@ -92,7 +92,7 @@ export function PublishDialog({ open, onClose }: { open: boolean; onClose: () =>
     try {
       if (ed().saveState !== "saved" && !(await saveNow())) throw new Error("Your latest changes have not been saved. Resolve the save error or wait for saving to finish, then publish again.");
       if (ed().saveState !== "saved") throw new Error("Your design changed while saving. Wait for it to finish and publish again.");
-      const res = await api<{ app: AppMeta }>(`/api/apps/${app.id}/publish`, { body: { slug: slugify(slug), explore, description, expectedRevision: ed().revision, mobileTarget } });
+      const res = await api<{ app: AppMeta }>(`/api/apps/${app.id}/publish`, { body: { slug: slugify(slug), explore, exploreDesignConsent: explore, description, expectedRevision: ed().revision, mobileTarget } });
       useEditor.setState({ app: res.app });
       setMeta(res.app);
       toast.success(mobileTarget ? "App published. Your phone test is queued." : live ? "Update published!" : "Your app is live! 🎉");
@@ -236,7 +236,7 @@ export function PublishDialog({ open, onClose }: { open: boolean; onClose: () =>
       <label className="checkbox-row">
         <input type="checkbox" checked={explore} onChange={(e) => setExplore(e.target.checked)} />
         <span>
-          <strong>List it in Explore</strong> — other makers can find it and make their own copy of your design: pages, text and images (anything shown on your pages). Rows in your database are never copied.
+          <strong>List it in Explore</strong> — share a copy of all page designs, text, images, actions and collection schemas, including pages restricted to users or admins and private field definitions. Remove confidential text, defaults and settings before enabling this. Database rows and uploaded record attachments are never copied by a remix.
         </span>
       </label>
 

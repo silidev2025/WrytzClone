@@ -693,6 +693,8 @@ export interface User {
   termsAcceptedAt?: string;
   /** bumped whenever the password changes, to tell apart old and new sessions */
   passwordChangedAt?: string;
+  /** Fences writes while an idempotent account-deletion job completes. */
+  deletingAt?: string;
   /** set by the site's operators: the account can't sign in until they lift it */
   suspended?: { at: string; reason: string };
 }
@@ -724,6 +726,8 @@ export interface AppMeta {
     slug: string;
     at: string;
     explore: boolean;
+    /** Explicit consent to sharing restricted page designs and collection schemas. */
+    exploreConsentAt?: string;
     description: string;
     revision: number;
   };
@@ -760,4 +764,6 @@ export interface MediaItem {
   uploaderId?: string | null;
   width?: number;
   height?: number;
+  /** Reserved quota, but not yet safe to serve; expired reservations are cleaned up. */
+  pending?: boolean;
 }

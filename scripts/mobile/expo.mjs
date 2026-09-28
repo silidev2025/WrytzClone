@@ -9,7 +9,62 @@ const template = fileURLToPath(new URL('../../mobile/expo/', import.meta.url));
 const modules = path.join(template, 'node_modules');
 const cli = path.join(modules, 'expo/bin/cli');
 
-export async function expoAvailable() { try { await fs.access(cli); await fs.access(path.join(modules, '@expo/ngrok')); return true; } catch { return false; } }
+const imageName = process.env.CRAFTBASE_EXPO_IMAGE || 'craftbase-expo:local';
+function docker(args) {
+  return spawn('docker', args, { windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+}
+export async function expoAvailable() {
+  return new Promise((resolve) => {
+    const child = docker(['image', 'inspect', imageName]);
+    const timer = setTimeout(() => { child.kill(); resolve(false); }, 10_000);
+    child.once('error', () => { clearTimeout(timer); resolve(false); });
+    child.once('close', (code) => { clearTimeout(timer); resolve(code === 0); });
+    child.stdout.resume(); child.stderr.resume();
+  });
+}
+
+/** Public development servers run without host mounts, signing keys or server credentials. */
+export async function startIosTunnel(job, _dir, signal) {
+  if (!/^mob_[a-z0-9]+$/i.test(job.id)) throw new Error('Invalid mobile job id.');
+  const name = `cb-ios-${job.id}`;
+  const child = docker(['run', '--rm', '--init', '--name', name, '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--pids-limit=256', '--memory=1g', '--cpus=2', '--tmpfs=/tmp:rw,nosuid,size=512m', '--user=10001:10001', '--env=HOME=/tmp', '--interactive', imageName]);
+  let output = '', failure = '';
+  let closedFlag = false;
+  const closed = new Promise((resolve) => child.once('close', () => { closedFlag = true; resolve(); }));
+  child.stderr.on('data', (chunk) => { failure = (failure + chunk).slice(-1000); });
+  child.stdout.on('data', (chunk) => { output = (output + chunk).slice(-8000); });
+  child.once('error', (err) => { failure = err.message; closedFlag = true; });
+  child.stdin.on('error', () => {});
+  child.stdin.end(JSON.stringify({ id: job.id, appName: job.appName, appUrl: job.appUrl, platformUrl: job.platformUrl }));
+  let stopping;
+  const stop = () => stopping ||= new Promise((resolve) => {
+    const remove = docker(['rm', '--force', name]);
+    const timer = setTimeout(() => { remove.kill(); child.kill(); resolve(); }, 10_000);
+    const done = () => { clearTimeout(timer); child.kill(); resolve(); };
+    remove.once('error', done); remove.once('close', done); remove.stdout.resume(); remove.stderr.resume();
+  });
+  const abort = () => { void stop(); };
+  signal.addEventListener('abort', abort, { once: true });
+  try {
+    for (let i = 0; i < 180; i++) {
+      signal.throwIfAborted();
+      if (closedFlag) throw new Error(`Isolated Expo worker exited: ${failure}`);
+      for (const line of output.split(/\r?\n/)) {
+        let ready; try { ready = JSON.parse(line); } catch { continue; }
+        if (!ready?.url) continue;
+        const url = new URL(ready.url);
+        if (!['exp:', 'exps:'].includes(url.protocol) || !/\.(exp\.direct|ngrok\.io|ngrok-free\.app|ngrok\.app)$/.test(url.hostname)) throw new Error('Invalid Expo tunnel URL.');
+        const status = new URL(`https://${url.hostname}/status`);
+        return { url: url.href, closed, check: async () => {
+          const res = await fetch(status, { signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]), redirect: 'error' });
+          if (!res.ok || !(await res.text()).includes('packager-status:running')) throw new Error('The Expo tunnel is unreachable.');
+        }, stop: async () => { signal.removeEventListener('abort', abort); await stop(); } };
+      }
+      await delay(1000, undefined, { signal });
+    }
+    throw new Error('The isolated Expo tunnel did not become ready.');
+  } catch (err) { signal.removeEventListener('abort', abort); await stop(); throw err; }
+}
 
 function expoEnvironment() {
   // Never expose database, session, signing, or worker credentials to a public Metro server.
@@ -42,7 +97,7 @@ async function freePort() {
   return port;
 }
 
-export async function startIosTunnel(job, dir, signal) {
+export async function startLocalTunnel(job, dir, signal) {
   await prepareExpo(job, dir);
   const port = await freePort();
   const child = spawn(process.execPath, [cli, 'start', dir, '--tunnel', '--go', '--port', String(port)], {

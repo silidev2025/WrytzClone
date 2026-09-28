@@ -2,6 +2,7 @@ import type { AppMeta, User } from "@/lib/shared/types";
 import { nowIso } from "@/lib/shared/util";
 import { getStore } from "./store";
 import { audit } from "./audit";
+import { activeUser } from "./auth";
 import { notFound } from "./http";
 
 /*
@@ -24,11 +25,15 @@ export async function hasConsent(userId: string, appId: string): Promise<boolean
 
 export async function giveConsent(user: User, appId: string, ip?: string) {
   const store = await getStore();
-  const meta = await store.get<AppMeta>("apps", appId);
+  return store.transaction(async (tx) => {
+  await activeUser(tx, user.id);
+  const meta = await tx.get<AppMeta>("apps", appId);
   if (!meta || (!meta.published && meta.ownerId !== user.id && !(meta.adminIds || []).includes(user.id))) throw notFound("That app isn't available.");
-  await store.put("consents", { id: `${user.id}:${appId}`, userId: user.id, appId, at: nowIso() } satisfies Consent);
-  await audit({ action: "consent.given", userId: user.id, appId, ip });
+  await activeUser(tx, meta.ownerId);
+  await tx.put("consents", { id: `${user.id}:${appId}`, userId: user.id, appId, at: nowIso() } satisfies Consent);
+  await audit({ action: "consent.given", userId: user.id, appId, ip }, tx);
   return meta;
+  });
 }
 
 export async function revokeConsent(user: User, appId: string, ip?: string) {

@@ -149,7 +149,7 @@ export function SettingsForm({ user }: { user: PublicUser }) {
           <div>
             <h2>Your data</h2>
             <div className="sub">
-              Download a copy of everything we hold about you: your profile, apps, uploads, what you added in other people&apos;s apps and your security log.
+              Download your profile, owned app designs and data, upload details, contributions you can still read in other apps, and security log. Files are listed with download links; their contents are not included in the JSON. Concurrent edits may appear during the export.
               {LEGAL.privacyEmail ? ` Other privacy requests (correcting your email, objections, questions): ${LEGAL.privacyEmail}.` : ""}
             </div>
           </div>
@@ -179,7 +179,7 @@ export function SettingsForm({ user }: { user: PublicUser }) {
         open={deleting}
         onClose={() => setDeleting(false)}
         title="Delete your account?"
-        description="This can't be undone. Your apps, their data and your files are deleted right away. Type your password to confirm."
+        description="This can't be undone. Access ends immediately, and your apps, data and files are queued for deletion. Type your password to confirm."
         footer={
           <>
             <button className="btn ghost" onClick={() => setDeleting(false)}>

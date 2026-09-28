@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { CircleCheck, CircleAlert, Info } from "lucide-react";
 
 export type ToastTone = "success" | "error" | "info";
@@ -40,15 +41,19 @@ export function dismiss(id: number) {
 
 export function Toaster() {
   const [list, setList] = useState<ToastItem[]>([]);
+  const [mounted, setMounted] = useState(false);
   useEffect(() => {
+    setMounted(true);
     listeners.add(setList);
     return () => {
       listeners.delete(setList);
     };
   }, []);
-  if (!list.length) return null;
+  if (!mounted) return null;
   return (
-    <div className="toasts" role="status" aria-live="polite">
+    <>
+    {createPortal(<div data-live-announcer role="status" aria-live="polite" aria-atomic="true" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clipPath: "inset(50%)" }}>{list.map((t) => t.message).join(". ")}</div>, document.body)}
+    <div className="toasts">
       {list.map((t) => (
         <div key={t.id} className={`toast ${t.tone}`}>
           <span className="toast-icon">
@@ -68,5 +73,6 @@ export function Toaster() {
         </div>
       ))}
     </div>
+    </>
   );
 }

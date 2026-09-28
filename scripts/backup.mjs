@@ -1,17 +1,51 @@
-// Copy the file-storage data folder to backups/craftbase-<date-time>/ (Postgres: use pg_dump or your host's backups).
+// Back up PostgreSQL using pg_dump, or copy the file-storage data folder to backups/craftbase-<date-time>/.
 // Works while the server runs: the saved tables and the journal are read together, and the copy
 // starts over if the server saved tables in the middle, so the backup is one consistent moment.
 // Backups older than CRAFTBASE_BACKUP_KEEP_DAYS (default 30) are removed afterwards.
 // Restore: npm run restore -- <backup folder>
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+createRequire(import.meta.url)("@next/env").loadEnvConfig(process.cwd());
 
 const dir = path.resolve(process.env.CRAFTBASE_DATA_DIR || path.join(process.cwd(), ".data"));
 const backupDir = path.resolve(process.env.CRAFTBASE_BACKUP_DIR || path.join(process.cwd(), "backups"));
 const keepDays = Number(process.env.CRAFTBASE_BACKUP_KEEP_DAYS || 30);
 
 if (process.env.DATABASE_URL) {
-  console.log("DATABASE_URL is set: back up Postgres with pg_dump (or your host's backups) instead.");
+  fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+  const file = path.join(backupDir, `craftbase-${new Date().toISOString().replace(/[:.]/g, "-")}.dump`);
+  const partial = `${file}.partial`;
+  let connection;
+  try { connection = new URL(process.env.DATABASE_URL); }
+  catch { throw new Error("DATABASE_URL must be a valid PostgreSQL URL."); }
+  if (!["postgres:", "postgresql:"].includes(connection.protocol)) throw new Error("DATABASE_URL must be a PostgreSQL URL.");
+  // libpq does not expand a URI supplied only through PGDATABASE. Pass a URI
+  // explicitly, keeping its password out of the process arguments and output.
+  const password = connection.searchParams.get("password") ?? decodeURIComponent(connection.password);
+  connection.password = "";
+  connection.searchParams.delete("password");
+  fs.writeFileSync(partial, "", { mode: 0o600, flag: "wx" });
+  const result = spawnSync(process.env.PG_DUMP_PATH || "pg_dump", ["--dbname", connection.href, "--format=custom", "--no-owner", "--no-acl", "--file", partial, "--no-password"], {
+    env: { ...process.env, PGPASSWORD: password }, encoding: "utf8", windowsHide: true, timeout: 600_000,
+  });
+  if (result.error || result.status !== 0) {
+    fs.rmSync(partial, { force: true });
+    console.error("Postgres backup failed. Install pg_dump matching your server version and check database access. No successful backup was recorded.");
+    process.exit(1);
+  }
+  fs.renameSync(partial, file);
+  fs.chmodSync(file, 0o600);
+  if (keepDays > 0) {
+    const cutoff = Date.now() - keepDays * 86400000;
+    for (const entry of fs.readdirSync(backupDir, { withFileTypes: true })) {
+      const match = /^craftbase-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z\.dump$/.exec(entry.name);
+      if (entry.isFile() && match && Date.parse(`${match[1]}T${match[2]}:${match[3]}:${match[4]}.${match[5]}Z`) < cutoff)
+        fs.unlinkSync(path.join(backupDir, entry.name));
+    }
+  }
+  console.log(`Postgres backup saved to ${file}. Verify it by restoring into a separate test database.`);
   process.exit(0);
 }
 if (!fs.existsSync(dir)) {

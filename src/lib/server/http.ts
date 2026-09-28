@@ -1,4 +1,10 @@
 import { NextResponse } from "next/server";
+import { createHash } from "node:crypto";
+import { isIP } from "node:net";
+import { trustProxy } from "@/lib/shared/http-policy";
+import { DocumentValidationError } from "@/lib/shared/doc-validation";
+import { JSON_BODY_BYTES } from "@/lib/shared/limits";
+export { trustProxy } from "@/lib/shared/http-policy";
 
 export class HttpError extends Error {
   constructor(
@@ -24,11 +30,6 @@ export function json(data: unknown, init?: ResponseInit) {
  * Forwarded headers (X-Forwarded-For/Host/Proto) are only believed behind a proxy we were
  * told about (TRUST_PROXY=1, or Vercel). Otherwise anyone could fake them.
  */
-export function trustProxy(): boolean {
-  const v = (process.env.TRUST_PROXY || "").toLowerCase();
-  return v === "1" || v === "true" || v === "yes" || !!process.env.VERCEL;
-}
-
 export function requestHost(req: Request): string | null {
   if (trustProxy()) {
     const fwd = req.headers.get("x-forwarded-host");
@@ -65,6 +66,7 @@ export function route<C = { params: Promise<Record<string, string>> }>(fn: Handl
       if (result instanceof Response) return result;
       return json(result ?? { ok: true });
     } catch (err) {
+      if (err instanceof DocumentValidationError) return json({ error: err.message }, { status: 400 });
       if (err instanceof HttpError) return json({ error: err.message, details: err.details }, { status: err.status });
       console.error("[api]", req.method, new URL(req.url).pathname, err);
       return json({ error: "Something went wrong on our side. Please try again." }, { status: 500 });
@@ -104,6 +106,7 @@ export async function readBody(req: Request, maxBytes: number): Promise<Uint8Arr
 }
 
 export async function readJson<T = any>(req: Request, maxBytes = 1_000_000): Promise<T> {
+  maxBytes = Math.min(maxBytes, JSON_BODY_BYTES);
   const text = new TextDecoder().decode(await readBody(req, maxBytes));
   if (!text) return {} as T;
   try {
@@ -138,18 +141,12 @@ export function str(v: unknown, field: string, { max = 200, min = 0, optional = 
   return s;
 }
 
-/** Tiny in-memory rate limiter (per process), good enough to slow down guessing. */
-const buckets = new Map<string, { count: number; reset: number }>();
-export function rateLimit(key: string, limit: number, windowMs: number) {
-  const now = Date.now();
-  const b = buckets.get(key);
-  if (!b || b.reset < now) {
-    buckets.set(key, { count: 1, reset: now + windowMs });
-    if (buckets.size > 5000) for (const [k, v] of buckets) if (v.reset < now) buckets.delete(k);
-    return;
-  }
-  b.count++;
-  if (b.count > limit) throw new HttpError(429, "Too many attempts. Please wait a minute and try again.");
+/** Shared atomic buckets survive cold starts and never retain raw emails/IPs as keys. */
+export async function rateLimit(key: string, limit: number, windowMs: number) {
+  const { getStore } = await import("./store");
+  const id = createHash("sha256").update(key).digest("hex");
+  if (!(await (await getStore()).consumeRateLimit(id, limit, windowMs)))
+    throw new HttpError(429, "Too many attempts. Please wait a minute and try again.");
 }
 
 /**
@@ -159,10 +156,9 @@ export function rateLimit(key: string, limit: number, windowMs: number) {
  */
 export function clientIp(req: Request): string {
   if (!trustProxy()) return "direct";
-  return (
-    req.headers.get("cf-connecting-ip") ||
-    (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown"
-  );
+  // Vercel overwrites X-Forwarded-For. Never prefer an unrelated Cloudflare header.
+  // A self-hosted trusted proxy must overwrite the explicitly configured header.
+  const header = process.env.VERCEL ? "x-forwarded-for" : (process.env.TRUSTED_IP_HEADER || "x-forwarded-for").toLowerCase();
+  const value = (req.headers.get(header) || "").split(",")[0].trim();
+  return value.length <= 45 && isIP(value) ? value : "unknown";
 }

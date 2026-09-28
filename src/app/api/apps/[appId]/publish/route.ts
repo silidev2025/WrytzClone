@@ -18,7 +18,7 @@ export const POST = route<Ctx>(async (req, { params }) => {
   const { appId } = await params;
   const user = await requireUser();
   const body = await readJson<{ slug?: string; explore?: boolean; description?: string; expectedRevision?: number; mobileTarget?: string }>(req);
-  if (body.mobileTarget !== undefined) rateLimit(`mobile-publish:${user.id}`, 12, 3600_000);
+  if (body.mobileTarget !== undefined) await rateLimit(`mobile-publish:${user.id}`, 12, 3600_000);
   const app = await publishApp(user, appId, body);
   await audit({ action: "app.published", userId: user.id, appId, detail: app.published?.slug, ip: clientIp(req) });
   return { app };

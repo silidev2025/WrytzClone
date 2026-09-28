@@ -1,3 +1,5 @@
+import { JSON_BODY_BYTES } from "@/lib/shared/limits";
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -10,12 +12,15 @@ export class ApiError extends Error {
 
 /** fetch() + JSON + friendly errors. */
 export async function api<T = any>(url: string, opts: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
+  const body = opts.body === undefined ? undefined : opts.body instanceof FormData ? opts.body : JSON.stringify(opts.body);
+  if (typeof body === "string" && new TextEncoder().encode(body).length > JSON_BODY_BYTES)
+    throw new ApiError(413, "This request is too large. Split the import or reduce the size of this change before retrying.");
   let res: Response;
   try {
     res = await fetch(url, {
       method: opts.method || (opts.body !== undefined ? "POST" : "GET"),
       headers: opts.body !== undefined && !(opts.body instanceof FormData) ? { "Content-Type": "application/json" } : undefined,
-      body: opts.body === undefined ? undefined : opts.body instanceof FormData ? opts.body : JSON.stringify(opts.body),
+      body,
       credentials: "same-origin",
       signal: opts.signal,
     });
@@ -30,7 +35,10 @@ export async function api<T = any>(url: string, opts: { method?: string; body?: 
   } catch {
     data = null;
   }
-  if (!res.ok) throw new ApiError(res.status, data?.error || `Request failed (${res.status})`, data?.details);
+  if (!res.ok) {
+    if (res.status === 428 && data?.details?.termsRequired && typeof window !== "undefined") window.location.assign(`/auth?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+    throw new ApiError(res.status, data?.error || `Request failed (${res.status})`, data?.details);
+  }
   return data as T;
 }
 

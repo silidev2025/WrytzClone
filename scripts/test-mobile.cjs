@@ -23,6 +23,8 @@ const test = (name, run) => tests.push({ name, run });
 const isStatus = (status) => (err) => err.status === status;
 let store, seq = 0, apps = [];
 async function seed(kind = 'mobile') {
+  await store.put('users', user);
+  await store.put('users', other);
   const id = `mobile-app-${++seq}`;
   const at = new Date().toISOString();
   const doc = newAppDoc(); doc.settings.kind = kind;
@@ -98,6 +100,23 @@ test('APK completion requires a valid lease and Android target; downloads are sc
   await assert.rejects(mobile.uploadMobileApk(job.id, job.leaseToken, apk), isStatus(409));
   await mobile.stopMobileDeployment(user, id, job.id);
   await assert.rejects(mobile.downloadMobileApk(user, id, job.id), isStatus(404));
+});
+
+test('APK parts are retryable, validate checksums, and assemble files above the hosting request limit', async () => {
+  const id = await seed(); await publish(id); const job = await claim();
+  const large = Buffer.alloc(5 * 1024 * 1024 + 33, 7); large.writeUInt32LE(0x04034b50);
+  const digest = require('node:crypto').createHash('sha256').update(large).digest('hex');
+  const size = 1024 * 1024;
+  await assert.rejects(mobile.uploadMobilePart(job.id, 'wrong', 0, large.length, digest, large.subarray(0, size)), isStatus(403));
+  for (let part = 0; part < Math.ceil(large.length / size); part++) {
+    const bytes = large.subarray(part * size, (part + 1) * size);
+    await mobile.uploadMobilePart(job.id, job.leaseToken, part, large.length, digest, bytes);
+    if (!part) await mobile.uploadMobilePart(job.id, job.leaseToken, part, large.length, digest, bytes);
+  }
+  await assert.rejects(mobile.completeMobileUpload(job.id, job.leaseToken, '0'.repeat(64)), isStatus(400));
+  await mobile.completeMobileUpload(job.id, job.leaseToken, digest);
+  await mobile.completeMobileUpload(job.id, job.leaseToken, digest);
+  assert.deepEqual((await mobile.downloadMobileApk(user, id, job.id)).data, large);
 });
 
 test('tunnels accept only Expo addresses, cannot receive APKs, and stop cannot be undone by a late callback', async () => {

@@ -13,6 +13,7 @@ export type AuditAction =
   | "login.failed"
   | "logout"
   | "signup"
+  | "terms.accepted"
   | "password.changed"
   | "password.reset.requested"
   | "password.reset"

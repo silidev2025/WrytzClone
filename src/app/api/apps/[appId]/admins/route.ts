@@ -16,7 +16,7 @@ export const GET = route<Ctx>(async (_req, { params }) => {
 export const POST = route<Ctx>(async (req, { params }) => {
   const { appId } = await params;
   const user = await requireUser();
-  rateLimit(`invite:${user.id}`, 20, 60 * 60_000);
+  await rateLimit(`invite:${user.id}`, 20, 60 * 60_000);
   const body = await readJson<{ role?: unknown }>(req);
   const { token, expiresAt, role } = await createInvite(user, appId, parseRole(body.role ?? "admin"), clientIp(req));
   return { path: `/invite/${token}`, expiresAt, role };

@@ -10,7 +10,8 @@ import { isStatic, useRT, useRTStore } from "./store";
 
 export function useRuntimeApi() {
   const appId = useRT((s) => s.appId);
-  return useMemo(() => runtimeApi(appId), [appId]);
+  const viewer = useRT((s) => s.user?.id || "anonymous");
+  return useMemo(() => runtimeApi(appId, viewer), [appId, viewer]);
 }
 
 /**

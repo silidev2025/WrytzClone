@@ -17,6 +17,6 @@ export const POST = route<Ctx>(async (req, { params }) => {
   if (body.rows.length > 10000) throw badRequest("Import at most 10,000 rows at a time.");
   const rows = body.rows.filter((r): r is Record<string, unknown> => !!r && typeof r === "object");
   const result = await importRecords(col, rows, { user, isAdmin: true });
-  dataChanged(appId, "records", col.id);
+  await dataChanged(appId, "records", col.id);
   return result;
 });

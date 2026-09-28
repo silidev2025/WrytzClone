@@ -3,13 +3,15 @@
 // The current data folder is kept next to it (renamed), never deleted.
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
+createRequire(import.meta.url)("@next/env").loadEnvConfig(process.cwd());
 
 const dir = path.resolve(process.env.CRAFTBASE_DATA_DIR || path.join(process.cwd(), ".data"));
 const source = process.argv[2] && path.resolve(process.argv[2]);
 
 if (process.env.DATABASE_URL) {
   console.log("DATABASE_URL is set: restore Postgres with pg_restore (or your host's tools) instead.");
-  process.exit(0);
+  process.exit(1);
 }
 if (!source || !fs.existsSync(source) || !fs.statSync(source).isDirectory()) {
   console.error("Usage: npm run restore -- <backup folder>");

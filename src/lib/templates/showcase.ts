@@ -4,7 +4,7 @@
 import type { AppTemplate } from "./index";
 import type { ElementSpec } from "@/lib/shared/elements";
 import { box, button, buildPage, fill, image, input, photo, shape, solid, stack, text } from "@/lib/build";
-import { ACCESS, W, col, footerBar, formBox, formField, go, makeDoc, makeTheme, navBar, notify, recordList, recordTable, statCard, submitButton, tag, titleBlock } from "./kit";
+import { ACCESS, W, col, footerBar, formBox, formField, go, makeDoc, makeTheme, navBar, notify, recordList, recordTable, statCard, submitButton, titleBlock } from "./kit";
 
 const dataTag = (value: string, tone = "$primary"): ElementSpec => ({
   ...text(value, [0, 0, 100, 26], { fill: solid(`${tone}/12`), color: tone, radius: 999, fontSize: 12.5, fontWeight: 700, paddingX: 10, textAlign: "center", verticalAlign: "middle" }, "small"),

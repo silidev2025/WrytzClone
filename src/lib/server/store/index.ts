@@ -19,6 +19,9 @@ export function dataDir(): string {
 export function getStore(): Promise<Store> {
   if (!g.__craftbaseStore) {
     const url = process.env.DATABASE_URL;
+    if (process.env.VERCEL && !url) throw new Error("DATABASE_URL is required on Vercel; file storage is not persistent there.");
+    if (process.env.NODE_ENV === "production" && (process.env.CRAFTBASE_SECRET?.trim().length || 0) < 32)
+      throw new Error("Production requires CRAFTBASE_SECRET with at least 32 characters.");
     if (!url) warnIfSynced(dataDir());
     g.__craftbaseStore = url
       ? import("./pg").then((m) => m.createPgStore(url))
@@ -48,6 +51,7 @@ export function serverSecret(): string {
   if (g.__craftbaseSecret) return g.__craftbaseSecret;
   const env = process.env.CRAFTBASE_SECRET?.trim();
   if (env && env.length >= 32) return (g.__craftbaseSecret = env);
+  if (process.env.NODE_ENV === "production" || process.env.VERCEL) throw new Error("Configure CRAFTBASE_SECRET with at least 32 characters.");
   if (env) console.warn("[security] CRAFTBASE_SECRET should be at least 32 characters; ignoring it.");
   const url = process.env.DATABASE_URL;
   if (url) {

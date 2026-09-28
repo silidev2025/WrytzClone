@@ -3,7 +3,7 @@ import { audit } from "@/lib/server/audit";
 import { clientIp, rateLimit, readJson, route, str } from "@/lib/server/http";
 
 export const POST = route(async (req) => {
-  rateLimit(`signup:${clientIp(req)}`, 10, 60_000);
+  await rateLimit(`signup:${clientIp(req)}`, 10, 60_000);
   const body = await readJson<{ name?: string; email?: string; password?: string; acceptTerms?: unknown; ageOk?: unknown }>(req);
   const user = await createUser({
     name: str(body.name, "Name", { max: 80, optional: true }),
@@ -12,7 +12,7 @@ export const POST = route(async (req) => {
     acceptTerms: body.acceptTerms,
     ageOk: body.ageOk,
   });
-  await createSession(user.id, isSecureRequest(req), req.headers.get("user-agent"));
+  await createSession(user.id, isSecureRequest(req), req.headers.get("user-agent"), user.passwordHash);
   await audit({ action: "signup", userId: user.id, ip: clientIp(req) });
   return { user: publicUser(user) };
 });

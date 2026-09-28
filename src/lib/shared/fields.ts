@@ -100,7 +100,7 @@ export function isEmptyValue(v: unknown): boolean {
   return v === null || v === undefined || v === "" || (Array.isArray(v) && v.length === 0);
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 export type CoerceResult = { ok: true; value: unknown } | { ok: false; error: string };
 
@@ -128,7 +128,7 @@ export function coerceFieldValue(field: Field, raw: unknown): CoerceResult {
     case "number":
     case "currency":
     case "rating": {
-      if (typeof raw === "number") return checkRange(field, raw);
+      if (typeof raw === "number") return Number.isFinite(raw) ? checkRange(field, raw) : { ok: false, error: `${field.name} must be a finite number` };
       if (!trimmed) return { ok: true, value: null };
       const n = Number(trimmed.replace(/[,$€£¥\s]/g, ""));
       if (!Number.isFinite(n)) return { ok: false, error: `${field.name} must be a number` };
@@ -140,8 +140,13 @@ export function coerceFieldValue(field: Field, raw: unknown): CoerceResult {
     }
     case "date": {
       if (!trimmed) return { ok: true, value: null };
-      const m = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
-      if (m) return { ok: true, value: `${m[1]}-${m[2]}-${m[3]}` };
+      const m = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m) {
+        const date = new Date(`${trimmed}T00:00:00.000Z`);
+        if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== trimmed) return { ok: false, error: `${field.name} must be a valid calendar date` };
+        return { ok: true, value: trimmed };
+      }
+      if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return { ok: false, error: `${field.name} must be a date in YYYY-MM-DD format` };
       const d = new Date(trimmed);
       if (Number.isNaN(d.getTime())) return { ok: false, error: `${field.name} must be a date` };
       return { ok: true, value: d.toISOString().slice(0, 10) };
@@ -154,10 +159,11 @@ export function coerceFieldValue(field: Field, raw: unknown): CoerceResult {
     }
     case "time": {
       if (!trimmed) return { ok: true, value: null };
-      const m = trimmed.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?$/i);
+      const m = trimmed.match(/^(\d{1,2}):(\d{2})(?::([0-5]\d))?\s*(am|pm)?$/i);
       if (!m) return { ok: false, error: `${field.name} must be a time like 14:30` };
       let h = Number(m[1]);
-      if (m[3]) h = (h % 12) + (/pm/i.test(m[3]) ? 12 : 0);
+      if (m[4] && (h < 1 || h > 12)) return { ok: false, error: `${field.name} must be a valid 12-hour time` };
+      if (m[4]) h = (h % 12) + (/pm/i.test(m[4]) ? 12 : 0);
       if (h > 23 || Number(m[2]) > 59) return { ok: false, error: `${field.name} must be a valid time` };
       return { ok: true, value: `${String(h).padStart(2, "0")}:${m[2]}` };
     }

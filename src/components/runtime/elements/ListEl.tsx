@@ -73,7 +73,7 @@ export function ListContent({ el }: { el: El }) {
   if (editor && (!collectionId || (!loading && records.length === 0 && !debounced))) {
     // thumbnails show a few sample cards so the preview looks like the real thing
     const n = mode === "thumb" ? Math.min(q.pageSize || 3, 6) : 1;
-    records = mode === "thumb" && examples?.length ? queryRecords(examples, q, n) : Array.from({ length: n }, (_, i) => ({ ...sampleRecord(schema), id: `sample-${i}` }));
+    records = mode === "thumb" && examples?.length ? queryRecords(examples, q, n, schema) : Array.from({ length: n }, (_, i) => ({ ...sampleRecord(schema), id: `sample-${i}` }));
     sample = true;
   }
 

@@ -31,7 +31,7 @@ export function useModalFocus(open: boolean, onClose: () => void) {
     const siblings: HTMLElement[] = [];
     for (let branch: HTMLElement | null = panel; branch?.parentElement; branch = branch.parentElement) {
       for (const node of Array.from(branch.parentElement.children)) {
-        if (node !== branch && node instanceof HTMLElement) {
+        if (node !== branch && node instanceof HTMLElement && !node.hasAttribute("data-live-announcer")) {
           siblings.push(node);
           const lock = inertLocks.get(node) || { count: 0, previous: node.inert };
           lock.count++;

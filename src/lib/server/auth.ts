@@ -5,12 +5,15 @@ import type { PublicUser, User } from "@/lib/shared/types";
 import { nowIso, uid } from "@/lib/shared/util";
 import { ROOT_DOMAIN, rootHostname } from "@/lib/shared/urls";
 import { LEGAL } from "@/lib/shared/legal";
+import { SESSION_COOKIE } from "@/lib/shared/http-policy";
+import { EMAIL_RE } from "@/lib/shared/fields";
 import { getStore } from "./store";
-import { badRequest, conflict, trustProxy, unauthorized } from "./http";
+import type { StoreOps } from "./store";
+import { badRequest, conflict, HttpError, trustProxy, unauthorized } from "./http";
 
 const scrypt = promisify(crypto.scrypt) as (pw: string, salt: Buffer, keylen: number, opts: crypto.ScryptOptions) => Promise<Buffer>;
 
-export const SESSION_COOKIE = "cb_session";
+export { SESSION_COOKIE } from "@/lib/shared/http-policy";
 const SESSION_DAYS = 30;
 const AVATAR_COLORS = ["#6c47ff", "#ff6b9d", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#14b8a6"];
 
@@ -21,18 +24,19 @@ export interface Session {
   expiresAt: string;
   /** a rough description of the device, shown in Settings */
   device?: string;
+  credentialVersion?: string;
 }
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.randomBytes(16);
   const N = 16384;
-  const key = await scrypt(password, salt, 64, { N, r: 8, p: 1 });
-  return `scrypt$${N}$8$1$${salt.toString("base64")}$${key.toString("base64")}`;
+  const key = await scrypt(password, salt, 64, { N, r: 8, p: 5 });
+  return `scrypt$${N}$8$5$${salt.toString("base64")}$${key.toString("base64")}`;
 }
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const [algo, n, r, p, saltB64, keyB64] = stored.split("$");
-  if (algo !== "scrypt") return false;
+  if (algo !== "scrypt" || !saltB64 || !keyB64 || ![16384].includes(Number(n)) || Number(r) !== 8 || ![1, 5].includes(Number(p))) return false;
   const expected = Buffer.from(keyB64, "base64");
   const key = await scrypt(password, Buffer.from(saltB64, "base64"), expected.length, { N: Number(n), r: Number(r), p: Number(p) });
   return key.length === expected.length && crypto.timingSafeEqual(key, expected);
@@ -45,8 +49,6 @@ function hashToken(token: string) {
 export function publicUser(u: User): PublicUser {
   return { id: u.id, email: u.email, name: u.name, avatarColor: u.avatarColor, bio: u.bio };
 }
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 export function validateEmail(email: string) {
   const e = email.trim().toLowerCase();
@@ -110,12 +112,18 @@ function deviceName(ua: string | null): string | undefined {
   return `${browser} on ${os}`;
 }
 
-export async function createSession(userId: string, secure: boolean, userAgent?: string | null) {
+export async function createSession(userId: string, secure: boolean, userAgent: string | null, verifiedHash: string) {
   const store = await getStore();
   const token = crypto.randomBytes(32).toString("base64url");
   const expires = new Date(Date.now() + SESSION_DAYS * 864e5);
   const session: Session = { id: hashToken(token), userId, createdAt: nowIso(), expiresAt: expires.toISOString(), device: deviceName(userAgent ?? null) };
-  await store.put("sessions", session);
+  await store.transaction(async (tx) => {
+    const user = await tx.get<User>("users", userId);
+    if (!user || user.suspended || user.deletingAt || user.passwordHash !== verifiedHash)
+      throw unauthorized("Your account changed while signing in. Please sign in again.");
+    session.credentialVersion = hashToken(user.passwordHash);
+    await tx.put("sessions", session);
+  });
   const jar = await cookies();
   jar.set(SESSION_COOKIE, token, { httpOnly: true, sameSite: "lax", secure, path: "/", expires, domain: cookieDomain() });
 }
@@ -150,7 +158,8 @@ export async function currentUser(): Promise<User | null> {
   }
   const user = await store.get<User>("users", session.userId);
   // sessions from before a password change stop working, and suspended accounts are signed out
-  if ((user?.passwordChangedAt && session.createdAt < user.passwordChangedAt) || user?.suspended) {
+  if ((!session.credentialVersion && user?.passwordChangedAt && session.createdAt <= user.passwordChangedAt) || user?.suspended || user?.deletingAt ||
+      (user && session.credentialVersion && session.credentialVersion !== hashToken(user.passwordHash))) {
     await store.delete("sessions", session.id);
     return null;
   }
@@ -180,9 +189,16 @@ export async function signOutOthers(userId: string) {
   return n;
 }
 
-export async function requireUser(): Promise<User> {
+export async function requireUser(allowOutdatedTerms = false): Promise<User> {
   const user = await currentUser();
   if (!user) throw unauthorized();
+  if (!allowOutdatedTerms && user.termsVersion !== LEGAL.termsVersion) throw new HttpError(428, "Please review and accept the updated Terms and Privacy notice.", { termsRequired: true });
+  return user;
+}
+
+export async function activeUser(tx: StoreOps, userId: string): Promise<User> {
+  const user = await tx.get<User>("users", userId);
+  if (!user || user.suspended || user.deletingAt) throw unauthorized("This account is no longer available. Please sign in again.");
   return user;
 }
 
@@ -201,3 +217,21 @@ export function isSecureRequest(req: Request) {
 }
 
 export { hashToken };
+
+/** Upgrade legacy work factors only if the credential verified by this login is still current. */
+export async function upgradePassword(user: User, password: string): Promise<string> {
+  if (user.passwordHash.startsWith("scrypt$16384$8$5$")) return user.passwordHash;
+  const next = await hashPassword(password);
+  const store = await getStore();
+  return store.transaction(async (tx) => {
+    const fresh = await tx.get<User>("users", user.id);
+    if (!fresh || fresh.deletingAt || fresh.passwordHash !== user.passwordHash) throw unauthorized("Please sign in again.");
+    fresh.passwordHash = next;
+    await tx.put("users", fresh);
+    // Rehashing is not a password change: preserve already-authenticated sessions.
+    for (const session of await tx.find<Session>("sessions", "userId", user.id)) {
+      if (session.credentialVersion === hashToken(user.passwordHash)) await tx.put("sessions", { ...session, credentialVersion: hashToken(next) });
+    }
+    return next;
+  });
+}

@@ -20,10 +20,12 @@ import { bumpData, ed, setCollections, useEditor, type EditorState, type Peer } 
 
 type ChangeEvent = { type: "change"; rev: number; clientId: string; userId: string; changes: Change[]; accepted: string[]; adjusted: string[] };
 type ReloadEvent = { type: "reload"; rev: number; clientId: string | null };
-type AckEvent = { type: "ack"; rev: number; accepted: string[]; adjusted: string[] };
+type AckEvent = { type: "ack"; rev: number; accepted: string[]; adjusted: string[]; changes?: Change[] };
 type Numbered = ChangeEvent | ReloadEvent;
 
 const L = {
+  controller: new AbortController(),
+  dataKinds: new Set<"records" | "collections">(),
   appId: "",
   clientId: "",
   base: null as AppDoc | null,
@@ -41,7 +43,7 @@ const L = {
   applying: false,
   stopped: true,
   failures: 0,
-  waiters: [] as (() => void)[],
+  waiters: [] as ((saved: boolean) => void)[],
 };
 
 const newId = () => (crypto.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40);
@@ -69,7 +71,7 @@ function settle() {
   if (s.saveState === "conflict") return;
   if (diffDocs(L.base!, s.doc).length === 0) {
     if (s.saveState !== "saved") useEditor.setState({ saveState: "saved", saveError: null, lastSavedAt: new Date().toISOString() });
-    for (const w of L.waiters.splice(0)) w();
+    for (const w of L.waiters.splice(0)) w(true);
   } else scheduleFlush();
 }
 
@@ -88,29 +90,39 @@ function scheduleFlush(delay?: number) {
 
 async function flush() {
   if (L.stopped || L.inflight || !L.base) return;
+  const generation = L.clientId;
+  const active = () => !L.stopped && generation === L.clientId;
   const doc = ed().doc;
   const changes = diffDocs(L.base, doc);
   if (!changes.length) return settle();
   L.inflight = new Map(changes.map((c) => [c.k, c.v]));
   useEditor.setState({ saveState: "saving" });
   try {
-    const res = await api<ChangeEvent | AckEvent>(`/api/apps/${L.appId}/live`, { body: { clientId: L.clientId, changes } });
+    const res = await api<ChangeEvent | AckEvent>(`/api/apps/${L.appId}/live`, { body: { clientId: L.clientId, changes }, signal: L.controller.signal });
+    if (!active()) return;
     L.failures = 0;
     if (res.type === "ack") {
+      if (res.adjusted.length) {
+        if (!res.changes) { await resync("keep"); return; }
+        const patch = res.changes.filter((c) => unitIs(ed().doc, c.k, L.inflight?.get(c.k)));
+        L.base = applyChanges(L.base!, res.changes);
+        setRemote({ doc: applyChanges(ed().doc, patch) });
+      }
       // nothing changed on the server (it already had these values)
-      L.base = applyChanges(L.base!, res.accepted.filter((k) => L.inflight?.has(k)).map((k) => ({ k, v: L.inflight!.get(k) })));
+      L.base = applyChanges(L.base!, res.accepted.filter((k) => !res.adjusted.includes(k) && L.inflight?.has(k)).map((k) => ({ k, v: L.inflight!.get(k) })));
       L.inflight = null;
       settle();
     } else receive(res);
   } catch (err) {
+    if (!active()) return;
     L.inflight = null;
     if (err instanceof ApiError && (err.status === 401 || err.status === 403)) return accessLost();
     L.failures++;
     useEditor.setState({ saveState: "error", saveError: errorMessage(err) });
-    // a change the server refuses (e.g. over the page limit) is dropped after a few tries
+    // Keep rejected work recoverable; never replace the entire draft to hide a failed save.
     if (err instanceof ApiError && err.status === 400 && L.failures >= 3) {
-      toast.error(`${errorMessage(err)} Reloading the latest design.`);
-      await resync("discard");
+      saveRecovery();
+      toast.error(`${errorMessage(err)} Your edits are still here. Correct the issue and retry.`);
       return;
     }
     if (L.retryTimer) clearTimeout(L.retryTimer);
@@ -123,17 +135,19 @@ async function flush() {
 
 /** Save everything now (publishing, restoring…). Resolves true once the server has it all. */
 export async function syncNow(timeoutMs = 20_000): Promise<boolean> {
+  const generation = L.clientId;
   if (!L.base) return true;
   if (L.flushTimer) {
     clearTimeout(L.flushTimer);
     L.flushTimer = null;
   }
   const done = new Promise<boolean>((resolve) => {
-    const t = setTimeout(() => resolve(false), timeoutMs);
-    L.waiters.push(() => {
+    const t = setTimeout(() => { L.waiters = L.waiters.filter((w) => w !== waiter); resolve(false); }, timeoutMs);
+    const waiter = (saved: boolean) => {
       clearTimeout(t);
-      resolve(true);
-    });
+      resolve(saved);
+    };
+    L.waiters.push(waiter);
   });
   if (!L.inflight) {
     if (diffDocs(L.base, ed().doc).length === 0) {
@@ -143,7 +157,7 @@ export async function syncNow(timeoutMs = 20_000): Promise<boolean> {
     void flush();
   }
   const ok = await done;
-  return ok && ed().saveState === "saved";
+  return ok && generation === L.clientId && !L.stopped && ed().saveState === "saved";
 }
 
 /* ------------------------------------------------------------------ receiving */
@@ -220,8 +234,11 @@ function apply(ev: ChangeEvent) {
 async function resync(mode: "keep" | "announce" | "discard") {
   const announce = mode === "announce";
   if (L.stopped) return;
+  const generation = L.clientId;
   try {
-    const res = await api<{ doc: AppDoc; revision: number; collections: Collection[] }>(`/api/apps/${L.appId}`);
+    const res = await api<{ doc: AppDoc; revision: number; collections: Collection[] }>(`/api/apps/${L.appId}`, { signal: L.controller.signal });
+    if (L.stopped || generation !== L.clientId || res.revision < L.rev) return;
+    if (mode !== "keep") saveRecovery();
     const s = ed();
     const local = mode === "keep" ? diffDocs(L.base!, s.doc) : [];
     L.base = res.doc;
@@ -234,6 +251,7 @@ async function resync(mode: "keep" | "announce" | "discard") {
     if (announce) toast("Someone restored an earlier version of this design.");
     settle();
   } catch (err) {
+    if (L.stopped || generation !== L.clientId) return;
     if (err instanceof ApiError && (err.status === 401 || err.status === 403)) accessLost();
   }
 }
@@ -249,10 +267,12 @@ export function resetFromServer(doc: AppDoc, revision: number) {
 
 function accessLost() {
   if (L.stopped) return;
+  saveRecovery();
+  const generation = L.clientId;
   stopLive();
   useEditor.setState({ live: "offline", saveState: "error", saveError: "You no longer have edit access to this app." });
   toast.error("You no longer have edit access to this app. Your recent changes weren't saved.");
-  setTimeout(() => (window.location.href = "/apps"), 4000);
+  setTimeout(() => { if (L.clientId === generation && L.stopped) window.location.href = "/apps"; }, 4000);
 }
 
 /* ------------------------------------------------------------------ presence */
@@ -282,7 +302,7 @@ function sendPresence(force = false) {
   const json = JSON.stringify(payload);
   if (!force && json === L.lastPresence) return;
   L.lastPresence = json;
-  void api(`/api/apps/${L.appId}/live/presence`, { body: payload }).catch(() => undefined);
+  void api(`/api/apps/${L.appId}/live/presence`, { body: payload, signal: L.controller.signal }).catch(() => undefined);
 }
 
 function schedulePresence() {
@@ -304,17 +324,25 @@ export function liveCursor(pos: { x: number; y: number } | null) {
 /* ------------------------------------------------------------------ data */
 
 function onData(kind: "records" | "collections") {
+  const generation = L.clientId;
+  L.dataKinds.add(kind);
   if (L.dataTimer) clearTimeout(L.dataTimer);
   L.dataTimer = setTimeout(async () => {
     L.dataTimer = null;
-    if (kind === "collections") {
+    if (L.stopped || generation !== L.clientId) return;
+    const kinds = new Set(L.dataKinds);
+    L.dataKinds.clear();
+    if (kinds.has("collections")) {
       try {
-        const res = await api<{ collections: Collection[] }>(`/api/apps/${L.appId}/collections`);
+        const res = await api<{ collections: Collection[] }>(`/api/apps/${L.appId}/collections`, { signal: L.controller.signal });
+        if (L.stopped || generation !== L.clientId) return;
         setCollections(res.collections);
       } catch {
         /* next event tries again */
       }
-    } else bumpData();
+    }
+    if (L.stopped || generation !== L.clientId) return;
+    if (kinds.has("records")) bumpData();
     useEditor.setState((s) => ({ liveDataVersion: s.liveDataVersion + 1 }));
   }, 250);
 }
@@ -323,38 +351,46 @@ function onData(kind: "records" | "collections") {
 
 function connect() {
   if (L.stopped) return;
+  const generation = L.clientId;
+  const active = () => !L.stopped && generation === L.clientId && L.es === es;
   L.es?.close();
   const es = new EventSource(`/api/apps/${L.appId}/live?clientId=${encodeURIComponent(L.clientId)}&rev=${L.rev}`);
   L.es = es;
   useEditor.setState({ live: "connecting" });
   es.addEventListener("hello", (e) => {
+    if (!active()) return;
     const hello = JSON.parse((e as MessageEvent).data) as { rev: number; peers: Peer[]; resync: boolean };
     const peers: Record<string, Peer> = {};
     for (const p of hello.peers) if (p.clientId !== L.clientId) peers[p.clientId] = p;
     useEditor.setState({ live: "live", peers });
     if (hello.resync || hello.rev < L.rev) void resync("keep");
     sendPresence(true);
+    onData("collections");
+    onData("records");
   });
-  es.addEventListener("change", (e) => receive(JSON.parse((e as MessageEvent).data)));
-  es.addEventListener("reload", (e) => receive(JSON.parse((e as MessageEvent).data)));
-  es.addEventListener("presence", (e) => onPeer((JSON.parse((e as MessageEvent).data) as { peer: Peer }).peer));
+  es.addEventListener("change", (e) => { if (active()) receive(JSON.parse((e as MessageEvent).data)); });
+  es.addEventListener("reload", (e) => { if (active()) receive(JSON.parse((e as MessageEvent).data)); });
+  es.addEventListener("presence", (e) => { if (active()) onPeer((JSON.parse((e as MessageEvent).data) as { peer: Peer }).peer); });
   es.addEventListener("leave", (e) => {
+    if (!active()) return;
     const { clientId } = JSON.parse((e as MessageEvent).data) as { clientId: string };
     useEditor.setState((s) => ({ peers: peersWithout(s.peers, clientId) }));
   });
-  es.addEventListener("data", (e) => onData((JSON.parse((e as MessageEvent).data) as { kind: "records" | "collections" }).kind));
-  es.addEventListener("access", () => accessLost());
+  es.addEventListener("data", (e) => { if (active()) onData((JSON.parse((e as MessageEvent).data) as { kind: "records" | "collections" }).kind); });
+  es.addEventListener("resync", () => { if (active()) { void resync("keep"); onData("collections"); onData("records"); } });
+  es.addEventListener("access", () => { if (active()) accessLost(); });
   es.onerror = () => {
-    if (L.stopped) return;
+    if (!active()) return;
     useEditor.setState({ live: "offline" });
     // the browser retries on its own unless the server refused the stream
     if (es.readyState === EventSource.CLOSED) {
       setTimeout(async () => {
         if (L.stopped || L.es !== es) return;
         try {
-          await api(`/api/apps/${L.appId}`);
-          connect();
+          await api(`/api/apps/${L.appId}`, { signal: L.controller.signal });
+          if (active()) connect();
         } catch (err) {
+          if (!active()) return;
           if (err instanceof ApiError && (err.status === 401 || err.status === 403 || err.status === 404)) accessLost();
           else connect();
         }
@@ -365,7 +401,9 @@ function connect() {
 
 /** Start collaborating on the app loaded into the editor store. Returns the clean-up. */
 export function startLive() {
+  stopLive();
   const s = ed();
+  L.controller = new AbortController();
   L.appId = s.app.id;
   L.clientId = newId();
   L.base = s.doc;
@@ -374,6 +412,9 @@ export function startLive() {
   L.waiting.clear();
   L.stopped = false;
   L.failures = 0;
+  L.lastPresence = "";
+  L.dataKinds.clear();
+  offerRecovery();
   connect();
   const unsub = useEditor.subscribe((st, prev) => {
     if (st.doc !== prev.doc && !L.applying) scheduleFlush();
@@ -400,7 +441,10 @@ export function startLive() {
 }
 
 export function stopLive() {
+  if (!L.stopped) saveRecovery();
   L.stopped = true;
+  L.controller.abort();
+  for (const waiter of L.waiters.splice(0)) waiter(false);
   L.es?.close();
   L.es = null;
   for (const t of [L.flushTimer, L.gapTimer, L.retryTimer, L.dataTimer, L.presenceTimer]) if (t) clearTimeout(t);
@@ -408,3 +452,29 @@ export function stopLive() {
 }
 
 export const liveClientId = () => L.clientId;
+
+/** Session-scoped recovery: no cross-account localStorage and no automatic replay over server edits. */
+export function saveRecovery() {
+  const state = ed();
+  if (!L.base || state.app?.id !== L.appId || !diffDocs(L.base, state.doc).length) return;
+  try { sessionStorage.setItem(`cb-recovery:${state.user.id}:${L.appId}`, JSON.stringify({ at: new Date().toISOString(), doc: state.doc })); }
+  catch { /* The current draft remains in memory if browser storage is full/unavailable. */ }
+}
+
+function offerRecovery() {
+  try {
+    const state = ed();
+    const key = `cb-recovery:${state.user.id}:${state.app.id}`;
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return;
+    const saved = JSON.parse(raw) as { doc: AppDoc };
+    if (!diffDocs(saved.doc, state.doc).length) { sessionStorage.removeItem(key); return; }
+    toast("An unsaved draft from your previous session is available.", { duration: 30_000, action: {
+      label: "Download recovery", onClick: () => {
+        const url = URL.createObjectURL(new Blob([raw], { type: "application/json" }));
+        const link = document.createElement("a"); link.href = url; link.download = `${state.app.id}-recovery.json`; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      },
+    } });
+  } catch { /* Recovery storage is optional; it must never block opening the editor. */ }
+}

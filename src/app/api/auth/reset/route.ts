@@ -7,11 +7,11 @@ import { clientIp, rateLimit, readJson, route } from "@/lib/server/http";
 export const POST = route(async (req) => {
   const body = await readJson<{ email?: string; token?: string; password?: string }>(req);
   if (typeof body.token === "string") {
-    rateLimit(`reset-confirm:${clientIp(req)}`, 10, 60_000);
+    await rateLimit(`reset-confirm:${clientIp(req)}`, 10, 60_000);
     await resetPassword(body.token, body.password, clientIp(req));
     return { ok: true };
   }
-  rateLimit(`reset-request:${clientIp(req)}`, 5, 60_000);
+  await rateLimit(`reset-request:${clientIp(req)}`, 5, 60_000);
   const email = validateEmail(String(body.email || ""));
   const { emailed } = await requestReset(email, clientIp(req));
   return emailed

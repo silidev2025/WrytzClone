@@ -95,7 +95,7 @@ export function TableContent({ el }: { el: El }) {
 
   let rows: RuntimeRecord[] = data?.records || [];
   const sample = editor && (!el.props.collectionId || (!loading && !rows.length && !debounced));
-  if (sample) rows = mode === "thumb" && examples?.length ? queryRecords(examples, q, 6) : [sampleRecord(schema), sampleRecord(schema)];
+  if (sample) rows = mode === "thumb" && examples?.length ? queryRecords(examples, q, 6, schema) : [sampleRecord(schema), sampleRecord(schema)];
   const rowClick = el.events?.rowClick;
 
   if (!el.props.collectionId && !editor) return null;

@@ -23,7 +23,7 @@ await fs.mkdir(jobRoot, { recursive: true, mode: 0o700 });
 const targets = [];
 try { await androidTools(); targets.push('android'); } catch { console.warn('Android unavailable: install JDK 17+ and Android SDK platform 35 + build tools.'); }
 if (await expoAvailable()) targets.push('ios');
-else console.warn('iOS unavailable: run npm run mobile:install first.');
+else console.warn('iOS unavailable: start Docker and build the isolated image: docker build -f mobile/expo/Dockerfile -t craftbase-expo:local .');
 if (!targets.length) throw new Error('No mobile build tools are available. See docs/mobile-deployment.md.');
 
 const shutdown = new AbortController();
@@ -33,6 +33,26 @@ process.once('SIGINT', stop);
 process.once('SIGTERM', stop);
 
 async function request(body, job, apk) {
+  if (apk) {
+    const sha256 = crypto.createHash('sha256').update(apk).digest('hex');
+    const chunkSize = 1024 * 1024;
+    for (let offset = 0; offset < apk.length; offset += chunkSize) {
+      const url = new URL(endpoint);
+      url.searchParams.set('job', job.id); url.searchParams.set('part', String(offset / chunkSize));
+      url.searchParams.set('bytes', String(apk.length)); url.searchParams.set('sha256', sha256);
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const res = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream', 'X-Mobile-Lease': job.leaseToken }, body: apk.subarray(offset, offset + chunkSize), signal: AbortSignal.timeout(30_000), redirect: 'error' });
+          if (!res.ok) { const err = new Error(`APK part failed (${res.status}).`); err.status = res.status; throw err; }
+          break;
+        } catch (err) { if (attempt >= 2 || (err.status >= 400 && err.status < 500 && err.status !== 429)) throw err; await delay(1000 * (attempt + 1)); }
+      }
+    }
+    for (let attempt = 0; ; attempt++) {
+      try { return await request({ action: 'complete-upload', sha256 }, job); }
+      catch (err) { if (attempt >= 2 || (err.status >= 400 && err.status < 500)) throw err; await delay(1000); }
+    }
+  }
   const url = new URL(endpoint);
   if (job) url.searchParams.set('job', job.id);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': apk ? 'application/vnd.android.package-archive' : 'application/json' };

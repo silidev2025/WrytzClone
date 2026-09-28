@@ -7,12 +7,17 @@ import { RESERVED_SUBDOMAINS } from "@/lib/shared/urls";
 import { getStore, type StoreOps } from "./store";
 import { badRequest, conflict, forbidden, notFound } from "./http";
 import { contactLine } from "@/lib/shared/legal";
-import { createCollection, toRuntimeRecords, type Viewer } from "./data";
-import { copyDesignFiles } from "./media";
+import { canRead, createCollection, queryRawRecords, toRuntimeRecords, type Viewer } from "./data";
+import { copyDesignFiles, discardCopiedFiles, finishCopiedFiles } from "./media";
+import type { MediaItem } from "@/lib/shared/types";
 import { repairTemplateDoc } from "@/lib/shared/templateRepairs";
 import { queueMobileDeployment, stopAppDeployments, type DeploymentDoc } from "./mobile";
 import { applyChanges, unitEntries, type Change } from "@/lib/shared/sync";
-import { publish, withAppLock } from "./live";
+import { publish, queueLiveEvent, withAppLock } from "./live";
+import { DocumentValidationError } from "@/lib/shared/doc-validation";
+import { activeUser } from "./auth";
+import { queueBlobDeletion } from "./blob-cleanup";
+import { mapConcurrent } from "./batch";
 
 interface DraftDoc {
   id: string; // app id
@@ -42,6 +47,7 @@ export async function getAppMeta(appId: string, ops?: StoreOps): Promise<AppMeta
 }
 
 export async function getOwnedApp(user: User, appId: string, ops?: StoreOps): Promise<AppMeta> {
+  await activeUser(ops ?? await getStore(), user.id);
   const meta = await getAppMeta(appId, ops);
   if (meta.ownerId !== user.id) throw forbidden("Only the app's creator can do that.");
   return meta;
@@ -68,8 +74,10 @@ export function canEditApp(meta: AppMeta, user: User | null): boolean {
 
 /** The app, if this person may change it in the builder (its owner or an editor). */
 export async function getEditableApp(user: User, appId: string, ops?: StoreOps): Promise<AppMeta> {
+  await activeUser(ops ?? await getStore(), user.id);
   const meta = await getAppMeta(appId, ops);
   if (!canEditApp(meta, user)) throw forbidden("You need edit access to this app. Ask its owner for an editor invite link.");
+  await activeUser(ops ?? await getStore(), meta.ownerId);
   return meta;
 }
 
@@ -100,6 +108,8 @@ export async function findPublishedBySlug(slug: string): Promise<{ meta: AppMeta
   const store = await getStore();
   const [meta] = await store.find<AppMeta>("apps", "slug", slug.toLowerCase());
   if (!meta?.published) return null;
+  const owner = await store.get<User>("users", meta.ownerId);
+  if (!owner || owner.suspended || owner.deletingAt) return null;
   const pub = await store.get<PublishedDoc>("published", meta.id);
   if (!pub) return null;
   return { meta, doc: repairTemplateDoc(pub.doc, meta.templateId) };
@@ -107,6 +117,8 @@ export async function findPublishedBySlug(slug: string): Promise<{ meta: AppMeta
 
 /** A small copy of the home page for thumbnails. */
 export function previewOf(doc: AppDoc): { page: Page; theme: AppDoc["theme"]; kind: AppKind } | null {
+  // Existing malformed documents must not take down a shared listing during rollout.
+  try { doc = sanitizeDoc(doc); } catch { return null; }
   const page = doc.pages.find((p) => p.id === doc.homePageId) || doc.pages[0];
   if (!page) return null;
   const keep = new Set<string>();
@@ -139,19 +151,17 @@ export async function listMyApps(user: User) {
   const store = await getStore();
   const apps = await store.find<AppMeta>("apps", "ownerId", user.id);
   apps.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const out = [];
-  for (const meta of apps) {
+  return mapConcurrent(apps, async (meta) => {
     const draft = await store.get<DraftDoc>("drafts", meta.id);
     const preview = draft ? previewOf(draft.doc) : null;
-    out.push({
+    return {
       ...meta,
       kind: (draft?.doc.settings.kind === "mobile" ? "mobile" : "website") as AppKind,
       // the owner's thumbnails show a few of their own rows
       preview: preview ? { ...preview, ...(await previewData(meta.id, preview.page, { user, isAdmin: true }, true)) } : null,
       pageCount: draft?.doc.pages.length ?? 0,
-    });
-  }
-  return out;
+    };
+  });
 }
 
 /**
@@ -161,17 +171,17 @@ export async function listMyApps(user: User) {
 export async function previewData(appId: string, page: Page, viewer: Viewer, withRows: boolean) {
   const store = await getStore();
   const json = JSON.stringify(page);
-  const cols = (await store.find<Collection>("collections", "appId", appId)).filter((c) => json.includes(`"${c.id}"`));
+  const cols = (await store.find<Collection>("collections", "appId", appId)).filter((c) => json.includes(`"${c.id}"`) && canRead(c, viewer));
   if (!cols.length) return {};
   const schema: SchemaCollection[] = cols.map((c) => ({
     id: c.id,
     name: c.name,
-    fields: c.fields.map((f) => ({ id: f.id, name: f.name, type: f.type, required: !!f.required, options: f.options, currency: f.currency, refCollectionId: f.refCollectionId, min: f.min, max: f.max })),
+    fields: c.fields.filter((f) => viewer.isAdmin || !f.private).map((f) => ({ id: f.id, name: f.name, type: f.type, required: !!f.required, options: f.options, currency: f.currency, refCollectionId: f.refCollectionId, min: f.min, max: f.max })),
   }));
   if (!withRows) return { schema };
   const samples: Record<string, RuntimeRecord[]> = {};
   for (const c of cols) {
-    const recs = (await store.find<RecordDoc>("records", "collectionId", c.id)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 12);
+    const { records: recs } = await queryRawRecords(c, { pageSize: 12 }, viewer);
     samples[c.id] = await toRuntimeRecords(c, recs, viewer);
   }
   return { schema, samples };
@@ -221,6 +231,7 @@ export async function createApp(user: User, input: { name?: unknown; templateId?
 
   return store.transaction(async (tx) => {
     const meta = newMeta(user, name, template ? { templateId: template.id, emoji: template.emoji, color: template.color, description: template.tagline, kind } : { kind });
+    await checkAppLimit(tx, user);
     let doc: AppDoc = template ? template.build() : newAppDoc(undefined, kind);
     if (template) {
       // collections: give every template collection a real id, then fix references
@@ -300,6 +311,7 @@ export async function saveDraft(user: User, appId: string, rawDoc: unknown, base
     meta.revision = revision;
     meta.kind = doc.settings.kind === "mobile" ? "mobile" : "website";
     await tx.put("apps", meta);
+    await queueLiveEvent(tx, appId, { type: "reload", rev: revision, clientId: null });
     return { revision, updatedAt };
   }));
   // a whole-document save: anyone else with the editor open reloads it
@@ -332,7 +344,8 @@ export async function applyLiveChanges(user: User, appId: string, clientId: stri
       try {
         clean = sanitizeDoc(applyChanges(draft.doc, changes));
       } catch (err) {
-        throw badRequest(err instanceof Error ? err.message : "That change isn't valid.");
+        if (err instanceof DocumentValidationError) throw badRequest(err.message);
+        throw err;
       }
       const before = new Map(unitEntries(draft.doc).map(([k, v]) => [k, stableJson(v)]));
       const after = new Map<string, string>();
@@ -345,7 +358,10 @@ export async function applyLiveChanges(user: User, appId: string, clientId: stri
       for (const k of before.keys()) if (!after.has(k)) out.push({ k, v: null });
       const accepted = changes.map((c) => c.k);
       const adjusted = changes.filter((c) => (after.get(c.k) ?? "null") !== stableJson(c.v)).map((c) => c.k);
-      if (!out.length) return { rev: draft.revision, accepted, adjusted, event: null };
+      if (!out.length) {
+        const canonical = new Map(unitEntries(clean));
+        return { rev: draft.revision, accepted, adjusted, changes: accepted.map((k) => ({ k, v: canonical.get(k) ?? null })), event: null };
+      }
       const revision = draft.revision + 1;
       const updatedAt = nowIso();
       await tx.put("drafts", { id: appId, doc: clean, revision, updatedAt } satisfies DraftDoc);
@@ -358,6 +374,7 @@ export async function applyLiveChanges(user: User, appId: string, clientId: stri
         await tx.put("apps", meta);
       }
       const event = { type: "change" as const, rev: revision, clientId, userId: user.id, changes: out, accepted, adjusted };
+      await queueLiveEvent(tx, appId, event);
       return { rev: revision, accepted, adjusted, event };
     });
     if (result.event) await publish(appId, result.event);
@@ -379,11 +396,15 @@ export async function updateAppMeta(user: User, appId: string, patch: Record<str
   });
 }
 
-export async function deleteApp(user: User, appId: string) {
+export async function deleteApp(user: User, appId: string, deletingAccount = false) {
   const store = await getStore();
   const mediaIds = await store.transaction(async (tx) => {
-    await getOwnedApp(user, appId, tx);
+    if (deletingAccount) {
+      const meta = await getAppMeta(appId, tx);
+      if (meta.ownerId !== user.id) throw forbidden();
+    } else await getOwnedApp(user, appId, tx);
     for (const col of await tx.find<Collection>("collections", "appId", appId)) {
+      for (const field of col.fields) await tx.releaseUniqueScope?.(`${col.id}:${field.id}`);
       await tx.deleteWhere("records", "collectionId", col.id);
       await tx.delete("collections", col.id);
     }
@@ -398,13 +419,15 @@ export async function deleteApp(user: User, appId: string) {
     const media = await tx.find<{ id: string }>("media", "appId", appId);
     await tx.deleteWhere("media", "appId", appId);
     await tx.delete("apps", appId);
-    return [...media.map((m) => m.id), ...builds.flatMap((b) => b.artifactId ? [b.artifactId] : [])];
+    const ids = [...media.map((m) => m.id), ...builds.flatMap((b) => b.artifactId ? [b.artifactId] : [])];
+    for (const id of ids) await queueBlobDeletion(tx, id);
+    return ids;
   });
-  for (const id of mediaIds) await store.deleteBlob(id);
+  for (const id of mediaIds) await store.deleteBlob(id).then(() => store.delete("blobDeletes", id)).catch(() => undefined);
 }
 
 /** Copy collections (and optionally records) of one app into another; returns the id map. */
-async function copyData(tx: StoreOps, fromAppId: string, toAppId: string, withRecords: boolean, userId: string) {
+async function copyData(tx: StoreOps, fromAppId: string, toAppId: string, withRecords: boolean, userId: string, files = new Map<string, string>()) {
   const cols = await tx.find<Collection>("collections", "appId", fromAppId);
   const idMap = new Map<string, string>();
   for (const c of cols) idMap.set(c.id, uid("col"));
@@ -426,7 +449,18 @@ async function copyData(tx: StoreOps, fromAppId: string, toAppId: string, withRe
     for (const r of all) recMap.set(r.id, uid("rec", 12));
     for (const r of all) {
       const data: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(r.data)) data[k] = typeof v === "string" && recMap.has(v) ? recMap.get(v) : v;
+      for (const [k, v] of Object.entries(r.data)) {
+        const mediaId = typeof v === "string" ? /^\/api\/media\/(med_[A-Za-z0-9]+)$/.exec(v)?.[1] : undefined;
+        if (mediaId && !files.has(mediaId)) {
+          const sourceFile = await tx.get<MediaItem>("media", mediaId);
+          if (sourceFile && !sourceFile.public) throw conflict("An attachment changed while copying. Please try duplicating the app again.");
+        }
+        data[k] = mediaId && files.has(mediaId) ? `/api/media/${files.get(mediaId)}` : typeof v === "string" && recMap.has(v) ? recMap.get(v) : v;
+        if (mediaId && files.has(mediaId)) {
+          const media = await tx.get<MediaItem>("media", files.get(mediaId)!);
+          if (media && !media.public) await tx.put("media", { ...media, collectionId: idMap.get(r.collectionId)!, recordId: recMap.get(r.id)!, fieldId: k });
+        }
+      }
       await tx.put("records", { ...r, id: recMap.get(r.id)!, appId: toAppId, collectionId: idMap.get(r.collectionId)!, data, createdBy: r.createdBy ? userId : null });
     }
   }
@@ -435,8 +469,8 @@ async function copyData(tx: StoreOps, fromAppId: string, toAppId: string, withRe
 
 /** The app limit applies however an app is made (new, duplicate, remix). */
 async function checkAppLimit(ops: StoreOps, user: User) {
-  const mine = await ops.find<AppMeta>("apps", "ownerId", user.id);
-  if (mine.length >= MAX_APPS_PER_USER) throw badRequest(`You can have up to ${MAX_APPS_PER_USER} apps.`);
+  await activeUser(ops, user.id);
+  if (await ops.count("apps", "ownerId", user.id) >= MAX_APPS_PER_USER) throw badRequest(`You can have up to ${MAX_APPS_PER_USER} apps.`);
 }
 
 /** Point a design at copied files. */
@@ -463,14 +497,18 @@ export async function duplicateApp(user: User, appId: string) {
     ...(src.takenDown ? { takenDown: src.takenDown } : {}),
   });
   // the copy gets its own image files, so deleting the original can't break it
-  const files = await copyDesignFiles(draft.doc, user, meta.id);
-  return store.transaction(async (tx) => {
+  const files = await copyDesignFiles(draft.doc, user, meta.id, appId);
+  try { return await store.transaction(async (tx) => {
     await checkAppLimit(tx, user);
-    const idMap = await copyData(tx, appId, meta.id, true, user.id);
+    await getOwnedApp(user, appId, tx);
+    const currentDraft = await tx.get<DraftDoc>("drafts", appId);
+    if (currentDraft?.revision !== draft.revision) throw conflict("The design changed while copying. Please try again.");
+    const idMap = await copyData(tx, appId, meta.id, true, user.id, files);
     await tx.put("apps", meta);
     await tx.put("drafts", { id: meta.id, doc: remapMedia(remapIds(draft.doc, idMap), files), revision: 1, updatedAt: nowIso() } satisfies DraftDoc);
+    await finishCopiedFiles(tx, files);
     return meta;
-  });
+  }); } catch (err) { await discardCopiedFiles(files); throw err; }
 }
 
 /* ------------------------------------------------------------------ versions */
@@ -556,7 +594,7 @@ export async function checkSlug(appId: string, raw: string) {
   return { slug, available: true, error: null };
 }
 
-export async function publishApp(user: User, appId: string, input: { slug?: unknown; explore?: unknown; description?: unknown; expectedRevision?: unknown; mobileTarget?: unknown }) {
+export async function publishApp(user: User, appId: string, input: { slug?: unknown; explore?: unknown; exploreDesignConsent?: unknown; description?: unknown; expectedRevision?: unknown; mobileTarget?: unknown }) {
   const store = await getStore();
   return store.transaction(async (tx) => {
     const meta = await getEditableApp(user, appId, tx);
@@ -575,11 +613,15 @@ export async function publishApp(user: User, appId: string, input: { slug?: unkn
     if (other && other.id !== appId) throw conflict("Another app already uses that link. Try a different name.");
     if (meta.published && meta.published.slug !== slug) await stopAppDeployments(tx, appId, "The app's published address changed. Start a new phone test.");
     const at = nowIso();
+    const explore = input.explore === undefined ? (meta.published?.explore ?? false) : input.explore === true;
+    if (explore && input.exploreDesignConsent !== true && !meta.published?.exploreConsentAt)
+      throw badRequest("Confirm that Explore shares all page designs, including restricted pages and collection schemas, before publishing.");
     await tx.put("published", { id: appId, doc: draft.doc, publishedAt: at } satisfies PublishedDoc);
     meta.published = {
       slug,
       at,
-      explore: input.explore === undefined ? (meta.published?.explore ?? false) : !!input.explore,
+      explore,
+      exploreConsentAt: explore ? meta.published?.exploreConsentAt || at : undefined,
       description: typeof input.description === "string" ? input.description.trim().slice(0, 300) : meta.published?.description || meta.description,
       revision: draft.revision,
     };
@@ -609,12 +651,10 @@ export async function listExplore(query: string, limit = 60) {
     (a) => !q || a.name.toLowerCase().includes(q) || (a.published?.description || a.description).toLowerCase().includes(q),
   );
   matches.sort((a, b) => b.stats.visits - a.stats.visits || (b.published?.at || "").localeCompare(a.published?.at || ""));
-  const out = [];
-  for (const meta of matches.slice(0, limit)) {
-    const pub = await store.get<PublishedDoc>("published", meta.id);
-    const owner = await store.get<User>("users", meta.ownerId);
-    if (!pub) continue;
-    out.push({
+  const out = await mapConcurrent(matches.slice(0, limit), async (meta) => {
+    const [pub, owner] = await Promise.all([store.get<PublishedDoc>("published", meta.id), store.get<User>("users", meta.ownerId)]);
+    if (!pub || !owner || owner.deletingAt || owner.suspended) return null;
+    return {
       id: meta.id,
       name: meta.name,
       emoji: meta.emoji,
@@ -626,30 +666,36 @@ export async function listExplore(query: string, limit = 60) {
       publishedAt: meta.published!.at,
       // public cards get field names only (placeholder rows), never real data
       preview: await (async () => {
-        const p = previewOf(pub.doc);
+        const home = pub.doc.pages?.find((p) => p.id === pub.doc.homePageId);
+        const p = home?.access === "public" ? previewOf(pub.doc) : null;
         return p ? { ...p, ...(await previewData(meta.id, p.page, { user: null, isAdmin: false }, false)) } : null;
       })(),
-    });
-  }
-  return out;
+    };
+  });
+  return out.filter((item) => item !== null);
 }
 
 export async function remixApp(user: User, appId: string) {
   const store = await getStore();
   const src = await getAppMeta(appId);
-  if (!src.published?.explore && src.ownerId !== user.id) throw forbidden("That app can't be remixed.");
+  if ((!src.published?.explore || !src.published.exploreConsentAt) && src.ownerId !== user.id) throw forbidden("The owner must confirm design sharing before this app can be remixed.");
   const pub = await store.get<PublishedDoc>("published", appId);
   if (!pub) throw notFound("That app isn't published anymore.");
   await checkAppLimit(store, user);
   const meta = newMeta(user, `${src.name} remix`.slice(0, 60), { emoji: src.emoji, color: src.color, description: src.description, remixedFrom: src.id, kind: pub.doc.settings.kind === "mobile" ? "mobile" : "website" });
   const files = await copyDesignFiles(pub.doc, user, meta.id);
-  return store.transaction(async (tx) => {
+  try { return await store.transaction(async (tx) => {
     await checkAppLimit(tx, user);
+    const source = await getAppMeta(appId, tx);
+    const currentPublished = await tx.get<PublishedDoc>("published", appId);
+    if (!currentPublished || currentPublished.publishedAt !== pub.publishedAt) throw conflict("The app changed while remixing. Please try again.");
+    if ((!source.published?.explore || !source.published.exploreConsentAt) && source.ownerId !== user.id) throw forbidden("That app can no longer be remixed.");
     const idMap = await copyData(tx, appId, meta.id, false, user.id);
     await tx.put("apps", meta);
     await tx.put("drafts", { id: meta.id, doc: remapMedia(remapIds(pub.doc, idMap), files), revision: 1, updatedAt: nowIso() } satisfies DraftDoc);
+    await finishCopiedFiles(tx, files);
     return meta;
-  });
+  }); } catch (err) { await discardCopiedFiles(files); throw err; }
 }
 
 /* ------------------------------------------------------------------ stats + admins */
@@ -675,15 +721,16 @@ export async function recordVisit(appId: string) {
   });
 }
 
-export async function recordSubmission(appId: string) {
+export async function recordSubmission(appId: string, ops?: StoreOps) {
   const store = await getStore();
-  await store.transaction(async (tx) => {
+  const run = async (tx: StoreOps) => {
     const meta = await tx.get<AppMeta>("apps", appId);
     if (!meta) return;
     meta.stats.submissions++;
     bumpDaily(meta, "s");
     await tx.put("apps", meta);
-  });
+  };
+  if (ops) await run(ops); else await store.transaction(run);
 }
 
 

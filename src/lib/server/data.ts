@@ -12,6 +12,7 @@ import type {
   User,
 } from "@/lib/shared/types";
 import { DEFAULT_ACCESS, FIELD_TYPE_MAP, PRIVATE_ACCESS, coerceFieldValue, collectionNameError, defaultFieldValue, fieldNameError, isEmptyValue } from "@/lib/shared/fields";
+import { compareForSort, isDateGroup, numericAggregate, orderGroups } from "@/lib/shared/aggregate";
 import { compareValues } from "@/lib/shared/expressions";
 import crypto from "node:crypto";
 import { nowIso, uid } from "@/lib/shared/util";
@@ -20,6 +21,9 @@ import { badRequest, conflict, forbidden, HttpError, notFound } from "./http";
 import { attachmentsOf, deleteBlobs, syncAttachments } from "./media";
 import type { MediaItem } from "@/lib/shared/types";
 import { dateInZone, habitStreak, validTimeZone } from "@/lib/shared/habits";
+import { queueBlobDeletion } from "./blob-cleanup";
+import { activeUser } from "./auth";
+import { mapConcurrent } from "./batch";
 
 export interface Viewer {
   timeZone?: string;
@@ -151,8 +155,11 @@ export async function createCollection(
   ops?: StoreOps,
   // trusted callers only (template setup): a server-made id, and ids created in the same step
   internal?: { id: string; pending?: Set<string> },
+  actor?: User,
 ): Promise<Collection> {
+  if (!ops) return (await getStore()).transaction((tx) => createCollection(appId, input, tx, internal, actor));
   const store = ops ?? (await getStore());
+  if (actor) await (await import("./apps")).getEditableApp(actor, appId, store);
   const existing = await store.find<Collection>("collections", "appId", appId);
   if (existing.length >= 50) throw badRequest("An app can have at most 50 collections.");
   const name = String(input.name ?? "").trim();
@@ -166,7 +173,7 @@ export async function createCollection(
     id,
     appId,
     name,
-    icon: typeof input.icon === "string" ? input.icon.slice(0, 8) : undefined,
+    icon: typeof input.icon === "string" ? input.icon.slice(0, 40) : undefined,
     fields,
     // new collections are private until the maker decides who may see or add rows
     access: input.access === undefined ? { ...PRIVATE_ACCESS } : cleanAccess(input.access),
@@ -183,9 +190,11 @@ export async function updateCollection(
   appId: string,
   collectionId: string,
   patch: { name?: unknown; fields?: unknown; access?: unknown; icon?: unknown; stock?: unknown },
+  actor?: User,
 ): Promise<Collection> {
   const store = await getStore();
   return store.transaction(async (tx) => {
+    if (actor) await (await import("./apps")).getEditableApp(actor, appId, tx);
     const col = await getCollection(appId, collectionId, tx);
     if (patch.name !== undefined) {
       const name = String(patch.name).trim();
@@ -194,7 +203,7 @@ export async function updateCollection(
       if (err) throw badRequest(err);
       col.name = name;
     }
-    if (patch.icon !== undefined) col.icon = typeof patch.icon === "string" ? patch.icon.slice(0, 8) : undefined;
+    if (patch.icon !== undefined) col.icon = typeof patch.icon === "string" ? patch.icon.slice(0, 40) : undefined;
     if (patch.access !== undefined) col.access = cleanAccess(patch.access);
     if (patch.fields !== undefined) {
       const before = col.fields;
@@ -209,6 +218,7 @@ export async function updateCollection(
       if (removed.length || retyped.length) {
         const records = await tx.find<RecordDoc>("records", "collectionId", col.id);
         for (const r of records) {
+          const previousData = { ...r.data };
           let changed = false;
           for (const f of removed) {
             if (f.id in r.data) {
@@ -222,7 +232,24 @@ export async function updateCollection(
             r.data[f.id] = res.ok ? res.value : null;
             changed = true;
           }
-          if (changed) await tx.put("records", r);
+          if (changed) {
+            await tx.put("records", r);
+            await syncAttachments(tx, col, r, r.createdBy ?? null, previousData, before);
+          }
+        }
+      }
+      // Field changes must migrate uniqueness as well as the displayed schema.
+      for (const field of before) await tx.releaseUniqueScope?.(`${col.id}:${field.id}`);
+      const rows = await tx.find<RecordDoc>("records", "collectionId", col.id);
+      for (const field of after.filter((f) => f.unique)) {
+        const seen = new Set<string>();
+        for (const row of rows) {
+          const value = row.data[field.id];
+          if (isEmptyValue(value)) continue;
+          const key = String(value).toLowerCase();
+          if (seen.has(key)) throw conflict(`Remove duplicate values in ${field.name} before making it unique.`);
+          seen.add(key);
+          await tx.claimUnique?.(`${col.id}:${field.id}`, key, row.id);
         }
       }
     }
@@ -237,20 +264,22 @@ export async function updateCollection(
   });
 }
 
-export async function deleteCollection(appId: string, collectionId: string) {
+export async function deleteCollection(appId: string, collectionId: string, actor?: User) {
   const store = await getStore();
   const removed: string[] = [];
   await store.transaction(async (tx) => {
+    if (actor) await (await import("./apps")).getEditableApp(actor, appId, tx);
     const col = await getCollection(appId, collectionId, tx);
     for (const m of await tx.find<MediaItem>("media", "appId", appId)) {
       if (!m.public && m.collectionId === col.id) {
         await tx.delete("media", m.id);
+        await queueBlobDeletion(tx, m.id);
         removed.push(m.id);
       }
     }
     await tx.deleteWhere("records", "collectionId", col.id);
     await tx.delete("collections", col.id);
-    await tx.releaseUnique?.("", col.id);
+    for (const field of col.fields) await tx.releaseUniqueScope?.(`${col.id}:${field.id}`);
   });
   await deleteBlobs(removed);
 }
@@ -290,7 +319,7 @@ export function canWrite(col: Collection, viewer: Viewer) {
 export function canReadField(col: Collection, rec: RecordDoc, fieldId: string | undefined, viewer: Viewer) {
   if (!levelAllows(col.access.read, viewer, rec)) return false;
   const f = col.fields.find((x) => x.id === fieldId);
-  return fieldVisible(f, rec, viewer);
+  return !!f && fieldVisible(f, rec, viewer);
 }
 
 /* ------------------------------------------------------------------ helpers */
@@ -307,16 +336,10 @@ export function fieldByRef(col: Collection, ref: string): Field | undefined {
   return col.fields.find((f) => f.id === ref) || col.fields.find((f) => f.name.toLowerCase() === lower);
 }
 
-function valueOf(col: Collection, r: RecordDoc, ref: string): unknown {
-  const meta = META_FIELDS[ref.toLowerCase()];
-  if (meta) return r[meta];
-  const f = fieldByRef(col, ref);
-  return f ? r.data[f.id] : undefined;
-}
-
 /** May this viewer see this field of this record? (private fields: admins and the record's creator) */
 function fieldVisible(f: Field | undefined, r: RecordDoc, viewer: Viewer): boolean {
-  if (!f?.private || viewer.isAdmin) return true;
+  if (!f) return false;
+  if (!f.private || viewer.isAdmin) return true;
   return !!viewer.user && r.createdBy === viewer.user.id;
 }
 
@@ -342,21 +365,6 @@ export function recordLabel(col: Collection, r: RecordDoc, viewer?: Viewer): str
   const pf = primaryField(col);
   const v = pf && (!viewer || fieldVisible(pf, r, viewer)) ? r.data[pf.id] : null;
   return isEmptyValue(v) ? `Record ${r.id.slice(-5)}` : String(v);
-}
-
-function compareForSort(a: unknown, b: unknown, type?: FieldType): number {
-  const ea = isEmptyValue(a);
-  const eb = isEmptyValue(b);
-  if (ea && eb) return 0;
-  if (ea) return 1;
-  if (eb) return -1;
-  if (type === "number" || type === "currency" || type === "rating") return Number(a) - Number(b);
-  if (type === "boolean") return Number(!!a) - Number(!!b);
-  if (typeof a === "number" && typeof b === "number") return a - b;
-  return String(Array.isArray(a) ? a.join(",") : a).localeCompare(String(Array.isArray(b) ? b.join(",") : b), undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
 }
 
 const SEARCHABLE: FieldType[] = ["text", "longText", "email", "phone", "url", "select", "multiSelect"];
@@ -408,11 +416,16 @@ async function readableRecords(col: Collection, viewer: Viewer, ops?: StoreOps):
 }
 
 export async function queryRawRecords(col: Collection, q: RecordQuery, viewer: Viewer): Promise<QueryResult<RecordDoc>> {
-  let recs = await readableRecords(col, viewer);
-  if (q.ids?.length) {
-    const want = new Set(q.ids);
-    recs = recs.filter((r) => want.has(r.id));
+  if (!levelAllows(col.access.read, viewer)) throw forbidden(denyMessage("see this data", col.access.read, viewer));
+  const store = await getStore();
+  const size = Math.max(1, Math.min(500, Math.floor(q.pageSize || 50)));
+  const number = Math.max(1, Math.floor(q.page || 1));
+  if (store.recordPage && !q.filters?.length && !q.search?.trim() && (!q.sortField || q.sortField === "createdAt")) {
+    const result = await store.recordPage({ collectionId: col.id, ownerId: col.access.read === "owner" && !viewer.isAdmin ? viewer.user!.id : undefined, ids: q.ids, offset: (number - 1) * size, limit: size, ascending: q.sortDir === "asc" });
+    return { ...result, page: number, pageSize: size };
   }
+  const requested = q.ids?.length ? await Promise.all([...new Set(q.ids)].map((id) => store.get<RecordDoc>("records", id))) : null;
+  let recs = requested ? requested.filter((r): r is RecordDoc => !!r && r.collectionId === col.id && r.appId === col.appId && levelAllows(col.access.read, viewer, r)) : await readableRecords(col, viewer);
   if (q.filters?.length) recs = recs.filter((r) => matchesFilters(col, r, q.filters!, viewer));
   const search = q.search?.trim().toLowerCase();
   if (search) {
@@ -473,9 +486,11 @@ export async function toRuntimeRecords(col: Collection, recs: RecordDoc[], viewe
     if (refData.has(f.refCollectionId!)) continue;
     const target = await store.get<Collection>("collections", f.refCollectionId!);
     if (!target || target.appId !== col.appId || !levelAllows(target.access.read, viewer)) continue;
-    let all = await store.find<RecordDoc>("records", "collectionId", target.id);
-    // "only the person who added it" applies to linked records too
-    if (target.access.read === "owner" && !viewer.isAdmin) all = all.filter((t) => !!viewer.user && t.createdBy === viewer.user.id);
+    // Expand only referenced rows on this page, instead of downloading the entire target collection.
+    const fields = refFields.filter((ref) => ref.refCollectionId === target.id);
+    const ids = [...new Set(recs.flatMap((r) => fields.filter((ref) => fieldVisible(ref, r, viewer) && r.data[ref.id]).map((ref) => String(r.data[ref.id]))))];
+    const rows = await mapConcurrent(ids, (id) => store.get<RecordDoc>("records", id));
+    const all = rows.filter((r): r is RecordDoc => !!r && r.collectionId === target.id && r.appId === col.appId && levelAllows(target.access.read, viewer, r));
     refData.set(target.id, { col: target, map: new Map(all.map((t) => [t.id, t])) });
   }
   return recs.map((r) => {
@@ -503,6 +518,7 @@ export async function toRuntimeRecords(col: Collection, recs: RecordDoc[], viewe
  * (e.g. +1 on a hidden collection) only get its id back.
  */
 export async function recordForViewer(col: Collection, rec: RecordDoc, viewer: Viewer): Promise<RuntimeRecord> {
+  col = await getCollection(col.appId, col.id);
   if (!levelAllows(col.access.read, viewer, rec)) return { id: rec.id, createdAt: rec.createdAt, updatedAt: rec.updatedAt, createdBy: null };
   const [out] = await toRuntimeRecords(col, [rec], viewer);
   return out;
@@ -625,7 +641,7 @@ function throwIfErrors(errors: Record<string, string>) {
 async function checkUnique(tx: StoreOps, col: Collection, data: Record<string, unknown>, docId: string) {
   const uniques = col.fields.filter((f) => f.unique && f.id in data);
   if (!uniques.length) return;
-  const all = await tx.find<RecordDoc>("records", "collectionId", col.id);
+  const all = tx.claimUnique ? [] : await tx.find<RecordDoc>("records", "collectionId", col.id);
   for (const f of uniques) {
     const scope = `${col.id}:${f.id}`;
     if (isEmptyValue(data[f.id])) {
@@ -640,13 +656,13 @@ async function checkUnique(tx: StoreOps, col: Collection, data: Record<string, u
   }
 }
 
-async function createInTx(tx: StoreOps, col: Collection, values: Record<string, unknown>, viewer: Viewer): Promise<RecordDoc> {
+async function createInTx(tx: StoreOps, col: Collection, values: Record<string, unknown>, viewer: Viewer, knownCount?: number): Promise<RecordDoc> {
   if (!levelAllows(col.access.create, viewer)) throw forbidden(denyMessage("add to " + col.name, col.access.create, viewer));
   const { data, errors } = coerceAll(col, viewer.isAdmin ? values : withoutLocked(col, values), false);
   for (const f of col.fields) if (f.required && isEmptyValue(data[f.id]) && !errors[f.name]) errors[f.name] = `${f.name} is required`;
   await resolveReferences(tx, col, data, errors, viewer);
   throwIfErrors(errors);
-  const count = (await tx.find<RecordDoc>("records", "collectionId", col.id)).length;
+  const count = knownCount ?? await tx.count("records", "collectionId", col.id);
   if (count >= MAX_RECORDS_PER_COLLECTION) throw badRequest(`${col.name} is full (${MAX_RECORDS_PER_COLLECTION} records max).`);
   const id = uid("rec", 12);
   await checkUnique(tx, col, data, id);
@@ -703,6 +719,7 @@ async function deleteInTx(tx: StoreOps, col: Collection, recordId: string, viewe
   // files attached to the record go with it
   for (const m of await attachmentsOf(tx, rec.id)) {
     await tx.delete("media", m.id);
+    await queueBlobDeletion(tx, m.id);
     removedFiles.push(m.id);
   }
   return rec;
@@ -732,21 +749,35 @@ async function adjustInTx(tx: StoreOps, col: Collection, recordId: string, field
   return rec;
 }
 
-export async function createRecord(col: Collection, values: Record<string, unknown>, viewer: Viewer) {
+/** Permissions and schema must be read in the same transaction as the mutation. */
+async function writeContext(tx: StoreOps, col: Collection, viewer: Viewer) {
+  const user = viewer.user ? await activeUser(tx, viewer.user.id) : null;
+  const meta = await tx.get<AppMeta>("apps", col.appId);
+  if (!meta) throw notFound("That app no longer exists.");
+  await activeUser(tx, meta.ownerId);
+  const isAdmin = !!user && (meta.ownerId === user.id || (meta.adminIds || []).includes(user.id) || (meta.editorIds || []).includes(user.id));
+  if ((viewer.isAdmin && !isAdmin) || (!meta.published && !isAdmin)) throw forbidden("Your access to this app has changed.");
+  if (viewer.appId && user && !isAdmin && !(await tx.get("consents", `${user.id}:${meta.id}`))) throw forbidden("Please authorize this app again.");
+  return { col: await getCollection(col.appId, col.id, tx), viewer: { ...viewer, user, isAdmin } };
+}
+
+export async function createRecord(col: Collection, values: Record<string, unknown>, viewer: Viewer, ops?: StoreOps) {
   const store = await getStore();
-  return store.transaction((tx) => createInTx(tx, col, values, viewer));
+  const run = async (tx: StoreOps) => { const current = await writeContext(tx, col, viewer); return createInTx(tx, current.col, values, current.viewer); };
+  return ops ? run(ops) : store.transaction(run);
 }
 
 export async function updateRecord(col: Collection, recordId: string, values: Record<string, unknown>, viewer: Viewer) {
   const store = await getStore();
-  return store.transaction((tx) => updateInTx(tx, col, recordId, values, viewer));
+  return store.transaction(async (tx) => { const current = await writeContext(tx, col, viewer); return updateInTx(tx, current.col, recordId, values, current.viewer); });
 }
 
 export async function deleteRecords(col: Collection, recordIds: string[], viewer: Viewer) {
   const store = await getStore();
   const removedFiles: string[] = [];
   const n = await store.transaction(async (tx) => {
-    for (const id of recordIds) await deleteInTx(tx, col, id, viewer, removedFiles);
+    const current = await writeContext(tx, col, viewer);
+    for (const id of recordIds) await deleteInTx(tx, current.col, id, current.viewer, removedFiles);
     return recordIds.length;
   });
   await deleteBlobs(removedFiles);
@@ -755,15 +786,17 @@ export async function deleteRecords(col: Collection, recordIds: string[], viewer
 
 export async function adjustNumber(col: Collection, recordId: string, field: string, amount: number, min: number | undefined, viewer: Viewer) {
   const store = await getStore();
-  return store.transaction((tx) => adjustInTx(tx, col, recordId, field, amount, min, viewer));
+  return store.transaction(async (tx) => { const current = await writeContext(tx, col, viewer); return adjustInTx(tx, current.col, recordId, field, amount, min, current.viewer); });
 }
 
-/** Atomic habit operation. The habit row lock serializes concurrent requests on Postgres. */
+/** Serializable habit operation; concurrent checks retry against the committed calendar day. */
 export async function checkInHabit(appId: string, collectionId: string, habitId: string, timeZone: unknown, viewer: Viewer) {
   if (!viewer.user) throw forbidden("Sign in to check in a habit.");
   const store = await getStore();
   return store.transaction(async (tx) => {
-    const checkins = await getCollection(appId, collectionId, tx);
+    const current = await writeContext(tx, await getCollection(appId, collectionId, tx), viewer);
+    const checkins = current.col;
+    viewer = current.viewer;
     const habitField = fieldByRef(checkins, "Habit");
     const dayField = fieldByRef(checkins, "Day");
     if (habitField?.type !== "reference" || !habitField.refCollectionId || dayField?.type !== "date") throw badRequest("Check-ins need Habit (reference) and Day (date) fields.");
@@ -796,16 +829,25 @@ export async function checkInHabit(appId: string, collectionId: string, habitId:
 
 /** Import many rows at once (editor only). Returns how many were added and any row errors. */
 export async function importRecords(col: Collection, rows: Record<string, unknown>[], viewer: Viewer) {
-  const store = await getStore();
   const errors: { row: number; error: string }[] = [];
   let added = 0;
-  for (let i = 0; i < rows.length; i++) {
+  const store = await getStore();
+  for (let start = 0; start < rows.length && errors.length <= 50; start += 50) {
+    const batch = rows.slice(start, start + 50);
     try {
-      await store.transaction((tx) => createInTx(tx, col, rows[i], viewer));
-      added++;
-    } catch (err) {
-      errors.push({ row: i + 1, error: err instanceof HttpError ? err.message : "Could not import this row" });
-      if (errors.length > 50) break;
+      await store.transaction(async (tx) => {
+        const current = await writeContext(tx, col, viewer);
+        const count = await tx.count("records", "collectionId", current.col.id);
+        for (let i = 0; i < batch.length; i++) await createInTx(tx, current.col, batch[i], current.viewer, count + i);
+      });
+      added += batch.length;
+    } catch {
+      // A failed chunk rolled back completely. Preserve existing partial-import behavior:
+      // valid rows still import, with the original row numbers for individual errors.
+      for (let i = 0; i < batch.length && errors.length <= 50; i++) {
+        try { await createRecord(col, batch[i], viewer); added++; }
+        catch (err) { errors.push({ row: start + i + 1, error: err instanceof HttpError ? err.message : "Could not import this row" }); }
+      }
     }
   }
   return { added, errors };
@@ -815,12 +857,12 @@ export async function importRecords(col: Collection, rows: Record<string, unknow
  * Several record changes that succeed or fail together (e.g. place an order and reduce
  * stock). Later steps can use {{steps.0.id}} to point at a record created earlier.
  */
-export async function runTransaction(appId: string, steps: TransactionStep[], viewer: Viewer) {
+export async function runTransaction(appId: string, steps: TransactionStep[], viewer: Viewer, ops?: StoreOps) {
   if (!Array.isArray(steps) || !steps.length) throw badRequest("Add at least one step.");
   if (steps.length > 10) throw badRequest("A transaction can have at most 10 steps.");
   const store = await getStore();
   const removedFiles: string[] = [];
-  const out = await store.transaction(async (tx) => {
+  const run = async (tx: StoreOps) => {
     const results: { id: string }[] = [];
     const fill = (v: unknown) =>
       typeof v === "string"
@@ -831,7 +873,9 @@ export async function runTransaction(appId: string, steps: TransactionStep[], vi
           })
         : v;
     for (const step of steps) {
-      const col = await getCollection(appId, step.collectionId, tx);
+      const current = await writeContext(tx, await getCollection(appId, step.collectionId, tx), viewer);
+      const col = current.col;
+      viewer = current.viewer;
       const mapping: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(step.mapping || {})) mapping[k] = fill(v);
       const recordId = String(fill(step.recordId ?? "") ?? "");
@@ -853,8 +897,9 @@ export async function runTransaction(appId: string, steps: TransactionStep[], vi
       results.push({ id: rec.id });
     }
     return results;
-  });
-  await deleteBlobs(removedFiles);
+  };
+  const out = ops ? await run(ops) : await store.transaction(run);
+  if (!ops) await deleteBlobs(removedFiles);
   return out;
 }
 
@@ -870,28 +915,7 @@ export interface AggregateRequest {
 export async function aggregateRecords(col: Collection, req: AggregateRequest, viewer: Viewer) {
   let recs = await readableRecords(col, viewer);
   if (req.filters?.length) recs = recs.filter((r) => matchesFilters(col, r, req.filters!, viewer));
-  // hidden private numbers are left out of totals (visibleValue gives undefined -> NaN)
-  const numeric = (r: RecordDoc) => {
-    const v = visibleValue(col, r, req.field || "", viewer);
-    return v === undefined || v === null || v === "" ? NaN : Number(v);
-  };
-  const reduce = (list: RecordDoc[]): number => {
-    if (req.aggregate === "count" || !req.field) return list.length;
-    const nums = list.map(numeric).filter((n) => Number.isFinite(n));
-    if (!nums.length) return 0;
-    switch (req.aggregate) {
-      case "sum":
-        return nums.reduce((a, b) => a + b, 0);
-      case "avg":
-        return nums.reduce((a, b) => a + b, 0) / nums.length;
-      case "min":
-        return Math.min(...nums);
-      case "max":
-        return Math.max(...nums);
-      default:
-        return list.length;
-    }
-  };
+  const reduce = (list: RecordDoc[]) => numericAggregate(list.map((r) => visibleValue(col, r, req.field || "", viewer)), req.field ? req.aggregate : "count");
   if (!req.groupBy) return { value: reduce(recs) };
   const groupField = fieldByRef(col, req.groupBy);
   const groups = new Map<string, RecordDoc[]>();
@@ -900,7 +924,7 @@ export async function aggregateRecords(col: Collection, req: AggregateRequest, v
   for (const r of recs) {
     const hidden = groupField ? !fieldVisible(groupField, r, viewer) : false;
     let key = hidden ? null : visibleValue(col, r, req.groupBy, viewer);
-    if (groupField?.type === "date" || groupField?.type === "datetime" || /^created|^updated/i.test(req.groupBy))
+    if (isDateGroup(req.groupBy, groupField?.type))
       key = typeof key === "string" ? key.slice(0, 10) : key;
     const keys = Array.isArray(key) ? key : [key];
     for (const k of keys) {
@@ -909,13 +933,6 @@ export async function aggregateRecords(col: Collection, req: AggregateRequest, v
       groups.get(label)!.push(r);
     }
   }
-  let entries = Array.from(groups, ([label, list]) => ({ label, value: reduce(list) }));
-  if (groupField?.options?.length) {
-    const order = groupField.options;
-    entries.sort((a, b) => (order.indexOf(a.label) + 1 || 999) - (order.indexOf(b.label) + 1 || 999));
-  } else if (groupField?.type === "date" || groupField?.type === "datetime" || /^created|^updated/i.test(req.groupBy)) {
-    entries.sort((a, b) => a.label.localeCompare(b.label));
-  } else entries.sort((a, b) => b.value - a.value);
-  entries = entries.slice(0, 24);
+  const entries = orderGroups(Array.from(groups, ([label, list]) => ({ label, value: reduce(list) })), req.groupBy, groupField);
   return { groups: entries };
 }

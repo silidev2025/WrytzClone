@@ -44,7 +44,7 @@ export const POST = route<Ctx>(async (req, { params }) => {
   const { appId, col, viewer } = await setup(params);
   const body = await readJson<{ values?: Record<string, unknown> }>(req);
   const record = makerRecord(appId, await createRecord(col, body.values || {}, viewer));
-  dataChanged(appId, "records", col.id);
+  await dataChanged(appId, "records", col.id);
   return { record };
 });
 
@@ -55,6 +55,6 @@ export const DELETE = route<Ctx>(async (req, { params }) => {
   if (!Array.isArray(body.ids) || !body.ids.length) throw badRequest("Choose rows to delete.");
   const deleted = await deleteRecords(col, body.ids.map(String).slice(0, 5000), viewer);
   await audit({ action: "records.deleted", userId: viewer.user.id, appId: col.appId, target: col.name, detail: `${deleted} rows`, ip: clientIp(req) });
-  dataChanged(col.appId, "records", col.id);
+  await dataChanged(col.appId, "records", col.id);
   return { deleted };
 });

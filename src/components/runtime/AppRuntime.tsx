@@ -5,7 +5,7 @@ import { useStore } from "zustand";
 import type { AppDoc } from "@/lib/shared/types";
 import { MOBILE_BREAKPOINT } from "@/lib/shared/types";
 import { fillToCss, fontStack, mix, readableOn } from "@/lib/shared/theme";
-import { frameWidthFor, isMobileApp } from "@/lib/shared/layout";
+import { frameWidthFor, isHiddenAt, isMobileApp, mobileOverrideBox } from "@/lib/shared/layout";
 import { BRAND } from "@/lib/shared/brand";
 import { platformUrl, signInUrl } from "@/lib/shared/urls";
 import { Icon } from "@/components/ui/Icon";
@@ -147,6 +147,10 @@ export function AppRuntime({
   const autoFlow = bp === "mobile" && !page?.mobileCustom;
   const frameW = autoFlow && vw ? Math.min(vw, 780) : frameWidthFor(doc, bp);
   const scale = autoFlow ? 1 : vw ? Math.min(vw / frameW, phoneApp ? 1.15 : bp === "mobile" ? 1.35 : 1.5) : 1;
+  const bottomPinHeight = Math.max(0, ...(page?.rootIds || []).map((id) => {
+    const el = page?.elements[id];
+    return el?.pin === "bottom" && !isHiddenAt(el, bp) ? (bp === "mobile" ? mobileOverrideBox(el) || el.box : el.box).h * scale : 0;
+  }));
   const bleed = vw && !phoneApp ? Math.max(0, (vw - frameW * scale) / 2 / scale) : 0;
   // on a big screen a phone app shows as a phone-width column
   const shell = phoneApp && vw > frameW * scale + 40;
@@ -285,12 +289,12 @@ export function AppRuntime({
           </a>
         )}
         {mode === "preview" && !editorLink && (
-          <span className="rt-preview-chip">
+          <span className="rt-preview-chip" style={{ bottom: `calc(${14 + bottomPinHeight}px + env(safe-area-inset-bottom))` }}>
             <Icon name="Eye" size={13} /> Preview
           </span>
         )}
         {mode === "preview" && editorLink && (
-          <a className="rt-preview-chip" href={`/editor/${appId}`}>
+          <a className="rt-preview-chip" href={`/editor/${appId}`} style={{ bottom: `calc(${14 + bottomPinHeight}px + env(safe-area-inset-bottom))` }}>
             <Icon name="Eye" size={13} /> Preview · back to editor
           </a>
         )}

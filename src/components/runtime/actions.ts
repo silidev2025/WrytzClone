@@ -154,7 +154,14 @@ async function submitFormOnce(env: ActionEnv, formId: string): Promise<boolean> 
     }
   }
   const ok = await runActions(form.events?.submit, formEnv, result);
-  if (!ok) return false;
+  if (!ok) {
+    if (result !== undefined) {
+      resetForm(formEnv, formId);
+      toast.error("Your submission was saved, but a follow-up action failed. Do not submit it again.");
+      return true;
+    }
+    return false;
+  }
   const msg = form.props.successMessage?.trim();
   if (msg) toast.success(interpolate(msg, buildContext(env.store.getState(), env.scope, formId)));
   resetForm(formEnv, formId);

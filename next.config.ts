@@ -1,30 +1,6 @@
 import path from "node:path";
 import type { NextConfig } from "next";
 
-const dev = process.env.NODE_ENV !== "production";
-
-/**
- * What pages may load. Apps show images, videos, maps and embeds from other sites (https
- * only) and Google Fonts; scripts only come from this site. Next.js needs inline scripts
- * (and eval while developing). Nobody else may frame our pages.
- */
-const csp = [
-  "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${dev ? " 'unsafe-eval'" : ""}`,
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src 'self' data: https://fonts.gstatic.com",
-  "img-src 'self' data: blob: https:",
-  "media-src 'self' blob: https:",
-  "frame-src 'self' https:",
-  `connect-src 'self'${dev ? " ws: wss:" : ""}`,
-  "worker-src 'self'",
-  "manifest-src 'self'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'self'",
-].join("; ");
-
 const nextConfig: NextConfig = {
   // `pg` is only loaded when DATABASE_URL is set; keep it out of the server bundle.
   serverExternalPackages: ["pg"],
@@ -46,11 +22,6 @@ const nextConfig: NextConfig = {
           // browsers only honour this over HTTPS; there it keeps every later visit on HTTPS
           { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
         ],
-      },
-      {
-        // pages (not API responses or files, which set their own)
-        source: "/((?!api/).*)",
-        headers: [{ key: "Content-Security-Policy", value: csp }],
       },
     ];
   },

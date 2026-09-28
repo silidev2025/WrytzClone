@@ -13,21 +13,25 @@
     "mobile:install": "npm --prefix mobile/expo ci",
     "mobile:worker": "node scripts/mobile-worker.mjs",
     "backup": "node scripts/backup.mjs",
-    "restore": "node scripts/restore.mjs"
+    "restore": "node scripts/restore.mjs",
+    "test:security": "node scripts/test-security.cjs",
+    "test:collaboration": "node scripts/test-collaboration.cjs",
+    "test:postgres": "node scripts/test-postgres.cjs",
+    "test:browser": "node scripts/test-browser.cjs",
+    "check:deployment": "node scripts/check-deployment.mjs"
   },
   "dependencies": {
     "immer": "^11.1.18",
     "lucide-react": "^1.48.0",
     "next": "16.3.6",
+    "pg": "^8.23.0",
     "qrcode": "^1.5.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "zustand": "^5.0.15"
   },
-  "optionalDependencies": {
-    "pg": "^8.23.0"
-  },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^24.19.0",
     "@types/pg": "^8.15.0",
     "@types/qrcode": "^1.5.6",

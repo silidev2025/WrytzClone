@@ -74,3 +74,15 @@ export function isOwnUrl(url: string): boolean {
     return false;
   }
 }
+
+/** Normalize before trusting a redirect; browsers remove raw control characters in URLs. */
+export function safeNext(value: unknown): string {
+  if (typeof value !== "string" || /[\u0000-\u0020\u007f\\]/.test(value)) return "/apps";
+  if (isOwnUrl(value)) return value;
+  try {
+    const base = "https://redirect.invalid";
+    const url = new URL(value, base);
+    if (!value.startsWith("/") || url.origin !== base || url.pathname.startsWith("/api/")) return "/apps";
+    return url.pathname + url.search + url.hash;
+  } catch { return "/apps"; }
+}

@@ -1,13 +1,14 @@
 import { requireUser } from "@/lib/server/auth";
 import { route } from "@/lib/server/http";
-import { downloadMobileApk } from "@/lib/server/mobile";
+import { mobileApkInfo } from "@/lib/server/mobile";
+import { blobResponse } from "@/lib/server/blob-response";
 
-export const GET = route(async (_req, { params }) => {
+export const GET = route(async (req, { params }) => {
   const { appId, deploymentId } = await params;
-  const { data, filename } = await downloadMobileApk(await requireUser(), appId, deploymentId);
-  return new Response(new Uint8Array(data), { headers: {
+  const { artifactId, size, filename } = await mobileApkInfo(await requireUser(), appId, deploymentId);
+  return blobResponse(req, artifactId, size, {
     "Content-Type": "application/vnd.android.package-archive",
     "Content-Disposition": `attachment; filename="${filename}"`,
-    "Content-Length": String(data.length), "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
-  } });
+    "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+  });
 });

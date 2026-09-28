@@ -451,16 +451,43 @@ export class JsonStore implements Store {
   /* -------------------------------------------------- public API */
 
   async get<T extends Doc>(table: Table, id: string): Promise<T | null> {
+    return this.mutex.run(async () => {
     const d = this.getRaw(table, id);
     return d ? (structuredClone(d) as T) : null;
+    });
   }
 
   async find<T extends Doc>(table: Table, index: string, value: string): Promise<T[]> {
-    return this.findRaw(table, index, value).map((d) => structuredClone(d) as T);
+    return this.mutex.run(async () => this.findRaw(table, index, value).map((d) => structuredClone(d) as T));
+  }
+
+  async count(table: Table, index: string, value: string): Promise<number> {
+    return this.mutex.run(async () => this.findRaw(table, index, value).length);
+  }
+
+  async page<T extends Doc>(table: Table, options: { index?: string; value?: string; after?: string; limit?: number } = {}): Promise<T[]> {
+    return this.mutex.run(async () => this.pageRaw<T>(table, options));
+  }
+
+  private pageRaw<T extends Doc>(table: Table, options: { index?: string; value?: string; after?: string; limit?: number } = {}): T[] {
+    const docs = options.index ? this.findRaw(table, options.index, options.value || "") : Array.from(this.map(table).values());
+    return docs.filter((d) => d.id > (options.after || "")).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+      .slice(0, Math.max(1, Math.min(1000, options.limit || 250))).map((d) => structuredClone(d) as T);
+  }
+
+  async consumeRateLimit(key: string, limit: number, windowMs: number): Promise<boolean> {
+    return this.transaction(async (tx) => {
+      const now = Date.now();
+      const prior = await tx.get<{ id: string; count: number; reset: number }>("rateLimits", key);
+      const bucket = prior && prior.reset > now ? prior : { id: key, count: 0, reset: now + windowMs };
+      bucket.count = Math.min(bucket.count + 1, limit + 1);
+      await tx.put("rateLimits", bucket);
+      return bucket.count <= limit;
+    });
   }
 
   async scan<T extends Doc>(table: Table): Promise<T[]> {
-    return Array.from(this.map(table).values(), (d) => structuredClone(d) as T);
+    return this.mutex.run(async () => Array.from(this.map(table).values(), (d) => structuredClone(d) as T));
   }
 
   put<T extends Doc>(table: Table, doc: T): Promise<void> {
@@ -487,6 +514,8 @@ export class JsonStore implements Store {
         }
       };
       const tx: StoreOps = {
+        count: async (table, index, value) => this.findRaw(table, index, value).length,
+        page: async (table, options) => this.pageRaw(table, options),
         get: async <T extends Doc>(table: Table, id: string) => {
           const d = this.getRaw(table, id);
           return d ? (structuredClone(d) as T) : null;
@@ -553,8 +582,13 @@ export class JsonStore implements Store {
     await writeFileAtomic(this.blobPath(id), data);
   }
 
-  async getBlob(id: string) {
+  async getBlob(id: string, range?: { start: number; end: number }) {
     try {
+      if (range) {
+        const file = await fsp.open(this.blobPath(id), "r");
+        try { const buffer = Buffer.alloc(range.end - range.start + 1); const { bytesRead } = await file.read(buffer, 0, buffer.length, range.start); return buffer.subarray(0, bytesRead); }
+        finally { await file.close(); }
+      }
       return await fsp.readFile(this.blobPath(id));
     } catch {
       return null;
@@ -562,6 +596,6 @@ export class JsonStore implements Store {
   }
 
   async deleteBlob(id: string) {
-    await fsp.unlink(this.blobPath(id)).catch(() => undefined);
+    await fsp.unlink(this.blobPath(id)).catch((err) => { if (err.code !== "ENOENT") throw err; });
   }
 }

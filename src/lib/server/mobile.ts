@@ -5,6 +5,8 @@ import { appUrl, platformUrl } from "@/lib/shared/urls";
 import { uid } from "@/lib/shared/util";
 import { badRequest, conflict, forbidden, HttpError, notFound, unauthorized } from "./http";
 import { getStore, type Store, type StoreOps } from "./store";
+import { publicOrigin as configuredOrigin } from "./origin";
+import { queueBlobDeletion } from "./blob-cleanup";
 
 export const MAX_APK_BYTES = 20 * 1024 * 1024;
 const LEASE_MS = 90_000;
@@ -35,7 +37,7 @@ export function requireMobileWorker(req: Request) {
 
 function publicOrigin() {
   try {
-    const url = new URL(process.env.CRAFTBASE_PUBLIC_URL || "");
+    const url = new URL(configuredOrigin() || "");
     if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/" || /^(localhost|127\.|\[::1\])/.test(url.hostname) || url.hostname.endsWith(".localhost")) throw new Error();
     return url.origin;
   } catch {
@@ -160,7 +162,7 @@ export async function stopMobileDeployment(user: User, appId: string, id: string
   if (artifact) await store.deleteBlob(artifact);
 }
 
-export async function downloadMobileApk(user: User, appId: string, id: string) {
+export async function mobileApkInfo(user: User, appId: string, id: string) {
   const store = await getStore();
   const job = await store.transaction(async (tx) => {
     const meta = owner(await tx.get<AppMeta>("apps", appId), user);
@@ -169,9 +171,14 @@ export async function downloadMobileApk(user: User, appId: string, id: string) {
     return expireJob(tx, found, meta);
   });
   if (job.target !== "android" || job.status !== "ready" || !job.artifactId) throw notFound("This APK is no longer available. Publish a new build.");
-  const data = await store.getBlob(job.artifactId);
+  return { artifactId: job.artifactId, size: job.size!, filename: `${job.slug}-r${job.revision}.apk` };
+}
+
+export async function downloadMobileApk(user: User, appId: string, id: string) {
+  const info = await mobileApkInfo(user, appId, id);
+  const data = await (await getStore()).getBlob(info.artifactId);
   if (!data) throw notFound("This APK is no longer available. Publish a new build.");
-  return { data, filename: `${job.slug}-r${job.revision}.apk` };
+  return { data, filename: info.filename };
 }
 
 /** A single long-running worker owns a bounded set of build/tunnel processes. */
@@ -263,6 +270,7 @@ export async function uploadMobileApk(id: string, lease: string, data: Buffer) {
     if (job.target !== "android" || job.status !== "building") throw conflict("This job cannot receive an APK.");
   });
   const artifactId = uid("apk", 24);
+  await store.put("blobDeletes", { id: artifactId, createdAt: new Date().toISOString(), notBefore: Date.now() + 86400_000 });
   await store.putBlob(artifactId, data);
   try {
     await store.transaction(async (tx) => {
@@ -275,12 +283,61 @@ export async function uploadMobileApk(id: string, lease: string, data: Buffer) {
       job.expiresAt = new Date(Date.now() + APK_MS).toISOString();
       job.updatedAt = new Date().toISOString();
       await tx.put("mobileDeployments", job);
+      await tx.delete("blobDeletes", artifactId);
     });
-  } catch (err) { await store.deleteBlob(artifactId); throw err; }
+  } catch (err) { await queueBlobDeletion(store, artifactId); throw err; }
 }
 
-export async function cleanMobileDeployments(store: Store) {
-  for (const summary of await store.scan<DeploymentDoc>("mobileDeployments")) {
+const CHUNK_BYTES = 1024 * 1024;
+interface ApkUpload { id: string; kind: "apkUpload"; expiresAt: string; checksum: string; total: number; parts: Record<string, { id: string; size: number; checksum: string; ready: boolean }> }
+const checksum = (data: Buffer | string) => crypto.createHash("sha256").update(data).digest("hex");
+
+/** One-megabyte parts fit serverless request limits. Each part is retryable under the job lease. */
+export async function uploadMobilePart(id: string, lease: string, part: number, total: number, digest: string, data: Buffer) {
+  if (!Number.isInteger(total) || total < 100 || total > MAX_APK_BYTES || !Number.isInteger(part) || part < 0 || part >= Math.ceil(total / CHUNK_BYTES) || !/^[a-f0-9]{64}$/.test(digest) || data.length !== Math.min(CHUNK_BYTES, total - part * CHUNK_BYTES)) throw badRequest("Invalid APK upload part.");
+  const store = await getStore(); const summary = await jobSummary(id);
+  const uploadId = `apk_upload_${id}_${checksum(lease).slice(0, 16)}`;
+  const chunkId = `${uploadId}_${part}`; const partHash = checksum(data);
+  await store.transaction(async (tx) => {
+    const job = await leasedJob(tx, summary, lease);
+    if (job.target !== "android" || job.status !== "building") throw conflict("This job cannot receive an APK.");
+    const upload = await tx.get<ApkUpload>("jobs", uploadId) || { id: uploadId, kind: "apkUpload" as const, expiresAt: new Date(Date.now() + 86400_000).toISOString(), checksum: digest, total, parts: {} };
+    if (upload.checksum !== digest || upload.total !== total || (upload.parts[part] && upload.parts[part].checksum !== partHash)) throw conflict("Upload parts belong to different files.");
+    upload.parts[part] ||= { id: chunkId, size: data.length, checksum: partHash, ready: false };
+    await tx.put("jobs", upload);
+    await tx.put("blobDeletes", { id: chunkId, createdAt: new Date().toISOString(), notBefore: Date.now() + 86400_000 });
+  });
+  await store.putBlob(chunkId, data);
+  await store.transaction(async (tx) => {
+    await leasedJob(tx, summary, lease);
+    const upload = await tx.get<ApkUpload>("jobs", uploadId);
+    if (!upload) throw conflict("Upload expired. Start a new build.");
+    upload.parts[part].ready = true; await tx.put("jobs", upload);
+  });
+}
+
+export async function completeMobileUpload(id: string, lease: string, digest: string) {
+  const store = await getStore(); const summary = await jobSummary(id);
+  const existing = await store.get<DeploymentDoc>("mobileDeployments", id);
+  if (existing?.status === "ready" && existing.leaseToken === lease && existing.sha256 === digest) return;
+  await store.transaction((tx) => leasedJob(tx, summary, lease));
+  const uploadId = `apk_upload_${id}_${checksum(lease).slice(0, 16)}`;
+  const upload = await store.get<ApkUpload>("jobs", uploadId);
+  if (!upload || upload.checksum !== digest) throw badRequest("Upload not found.");
+  const chunks: Buffer[] = [];
+  for (let i = 0; i < Math.ceil(upload.total / CHUNK_BYTES); i++) {
+    const part = upload.parts[i]; const bytes = part?.ready ? await store.getBlob(part.id) : null;
+    if (!bytes || bytes.length !== part.size || checksum(bytes) !== part.checksum) throw conflict("An APK part is missing. Retry the upload.");
+    chunks.push(bytes);
+  }
+  const data = Buffer.concat(chunks);
+  if (data.length !== upload.total || checksum(data) !== digest) throw badRequest("APK checksum mismatch.");
+  await uploadMobileApk(id, lease, data);
+  await store.transaction(async (tx) => { for (const part of Object.values(upload.parts)) await queueBlobDeletion(tx, part.id); await tx.delete("jobs", uploadId); });
+}
+
+export async function cleanMobileDeployments(store: Store, summaries?: DeploymentDoc[]) {
+  for (const summary of summaries || await store.scan<DeploymentDoc>("mobileDeployments")) {
     const job = await store.transaction(async (tx) => {
       const meta = await tx.get<AppMeta>("apps", summary.appId);
       const current = await tx.get<DeploymentDoc>("mobileDeployments", summary.id);

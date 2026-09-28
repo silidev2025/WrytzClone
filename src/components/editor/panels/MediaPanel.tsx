@@ -181,7 +181,7 @@ export function MediaPanel() {
             >
               <Upload size={20} />
               {busy ? "Uploading…" : "Upload files"}
-              <span className="mini-note">Click or drop images, PDFs, video or audio (up to 10 MB each)</span>
+              <span className="mini-note">Click or drop images, PDFs, video or audio (up to 4 MB each)</span>
             </div>
             <input
               ref={fileRef}

@@ -2,6 +2,7 @@ import type { Action, AppDoc, AppKind, El, Fill, Page, Theme } from "./types";
 import { DEFAULT_THEME } from "./theme";
 import { isContainerType } from "./elements";
 import { deepClone, isPlainObject, nextLayerName, slugify, uid } from "./util";
+import { DocumentValidationError, validateDocumentShapes } from "./doc-validation";
 
 export function newPage(name: string, path: string, background: Fill = { type: "solid", color: "$background" }): Page {
   return {
@@ -212,10 +213,11 @@ const MAX_ELEMENTS_PER_PAGE = 2500;
  * is consistent and every required field exists. Throws on hopeless input.
  */
 export function sanitizeDoc(input: unknown): AppDoc {
-  if (!isPlainObject(input)) throw new Error("Invalid document");
+  validateDocumentShapes(input);
+  if (!isPlainObject(input)) throw new DocumentValidationError("Invalid document");
   const raw = input as unknown as AppDoc;
-  if (!Array.isArray(raw.pages) || raw.pages.length === 0) throw new Error("A document needs at least one page");
-  if (raw.pages.length > MAX_PAGES) throw new Error(`Apps can have at most ${MAX_PAGES} pages`);
+  if (!Array.isArray(raw.pages) || raw.pages.length === 0) throw new DocumentValidationError("A document needs at least one page");
+  if (raw.pages.length > MAX_PAGES) throw new DocumentValidationError(`Apps can have at most ${MAX_PAGES} pages`);
   const theme: Theme = {
     ...DEFAULT_THEME,
     ...(isPlainObject(raw.theme) ? raw.theme : {}),
@@ -256,11 +258,11 @@ function sanitizeSettings(raw: unknown): AppDoc["settings"] {
 }
 
 function sanitizePage(p: Page, index: number): Page {
-  if (!isPlainObject(p)) throw new Error("Invalid page");
+  if (!isPlainObject(p)) throw new DocumentValidationError("Invalid page");
   const elements: Record<string, El> = {};
   const src = isPlainObject(p.elements) ? p.elements : {};
   const ids = Object.keys(src);
-  if (ids.length > MAX_ELEMENTS_PER_PAGE) throw new Error(`A page can hold at most ${MAX_ELEMENTS_PER_PAGE} elements`);
+  if (ids.length > MAX_ELEMENTS_PER_PAGE) throw new DocumentValidationError(`A page can hold at most ${MAX_ELEMENTS_PER_PAGE} elements`);
   for (const id of ids) {
     const e = src[id] as El;
     if (!isPlainObject(e) || typeof e.type !== "string" || !isPlainObject(e.box)) continue;

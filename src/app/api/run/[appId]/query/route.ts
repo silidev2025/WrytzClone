@@ -8,7 +8,7 @@ type Ctx = { params: Promise<{ appId: string }> };
 export const POST = route<Ctx>(async (req, { params }) => {
   const { appId } = await params;
   const { viewer } = await runtimeContext(appId);
-  if (!viewer.isAdmin) rateLimit(`read:${appId}:${clientIp(req)}`, 300, 60_000);
+  if (!viewer.isAdmin) await rateLimit(`read:${appId}:${clientIp(req)}`, 300, 60_000);
   const body = await readJson<{
     collectionId?: string;
     search?: string;

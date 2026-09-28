@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import "./globals.css";
 import "./workspace.css";
 import "./runtime.css";
@@ -25,11 +26,12 @@ export const viewport: Viewport = {
 // Apply the saved colour mode before the first paint (no flash of the wrong theme).
 const colorModeScript = `try{var m=localStorage.getItem('cb-color-mode')||'light';if(m==='system'){m=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}document.documentElement.dataset.theme=m}catch(e){}`;
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const nonce = (await headers()).get("x-nonce") || undefined;
   return (
     <html lang="en" data-theme="light" className={`${inter.variable} ${bricolage.variable}`} suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: colorModeScript }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: colorModeScript }} />
       </head>
       <body suppressHydrationWarning>
         {children}

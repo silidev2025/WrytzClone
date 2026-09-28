@@ -29,10 +29,11 @@ function useAggregate(el: El, groupBy?: string) {
   const live = useLiveAggregate(el, groupBy);
   const thumb = useRT((s) => s.mode === "thumb");
   const examples = useRT((s) => (el.props.collectionId ? s.samples[el.props.collectionId] : undefined));
+  const schema = useRT((s) => s.schema.find((c) => c.id === el.props.collectionId));
   // thumbnails: work it out from the example rows
   if (thumb && examples?.length && el.props.dataSource !== "manual") {
-    const rows = queryRecords(examples, { filters: el.props.query?.filters });
-    return { data: aggregateRecords(rows, el.props.aggregate || "count", el.props.field, groupBy), loading: false, error: null };
+    const rows = queryRecords(examples, { filters: el.props.query?.filters }, undefined, schema);
+    return { data: aggregateRecords(rows, el.props.aggregate || "count", el.props.field, groupBy, schema), loading: false, error: null };
   }
   return live;
 }

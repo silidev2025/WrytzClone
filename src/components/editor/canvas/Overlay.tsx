@@ -41,7 +41,6 @@ export function Overlay({ viewportRef, hostRef, flowMobile }: { viewportRef: Ref
   const bp = useEditor((s) => s.bp);
   const phoneApp = useEditor((s) => s.doc.settings.kind === "mobile");
   const pageName = useEditor((s) => getPage(s).name);
-  const mobileCustom = useEditor((s) => !!getPage(s).mobileCustom);
 
   useEffect(() => {
     let raf = 0;

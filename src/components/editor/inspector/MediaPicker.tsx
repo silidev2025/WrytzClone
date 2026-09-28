@@ -90,7 +90,7 @@ export function MediaPickerModal({ open, onClose, onPick }: { open: boolean; onC
           <button className="upload-drop" onClick={() => fileRef.current?.click()} disabled={busy}>
             <Upload size={20} />
             {busy ? "Uploading…" : "Upload images from your device"}
-            <span className="mini-note">PNG, JPG, GIF, WebP or SVG · up to 10 MB</span>
+            <span className="mini-note">PNG, JPG, GIF, WebP or SVG · up to 4 MB</span>
           </button>
           <input
             ref={fileRef}

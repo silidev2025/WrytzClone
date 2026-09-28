@@ -1,13 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { subdomainOf } from "@/lib/shared/urls";
+import { contentSecurityPolicy } from "@/lib/shared/csp";
 
-const SESSION_COOKIE = "cb_session";
-
-/** Forwarded headers are only believed behind a proxy we were told about (see http.ts). */
-function trustProxy(): boolean {
-  const v = (process.env.TRUST_PROXY || "").toLowerCase();
-  return v === "1" || v === "true" || v === "yes" || !!process.env.VERCEL;
-}
+import { SESSION_COOKIE, trustProxy } from "@/lib/shared/http-policy";
 
 /**
  * On an app's own subdomain only what the app needs is reachable: its runtime API, files and
@@ -31,18 +26,21 @@ function markCacheable(res: NextResponse, req: NextRequest) {
  * /app/<name>/…  Does nothing special unless NEXT_PUBLIC_ROOT_DOMAIN is set.
  */
 export function proxy(req: NextRequest) {
+  const nonce = btoa(crypto.randomUUID());
+  const policy = contentSecurityPolicy(nonce, process.env.NODE_ENV !== "production");
+  const headers = new Headers(req.headers);
+  headers.delete("x-cb-app-host");
+  headers.set("x-nonce", nonce);
+  headers.set("Content-Security-Policy", policy);
+  const secure = (res: NextResponse) => {
+    if (!req.nextUrl.pathname.startsWith("/api/")) res.headers.set("Content-Security-Policy", policy);
+    return res;
+  };
   const host = (trustProxy() && req.headers.get("x-forwarded-host")) || req.headers.get("host");
   const slug = subdomainOf(host);
   const { pathname } = req.nextUrl;
   if (!slug) {
-    // this header is ours to set; never accept it from outside
-    if (req.headers.has("x-cb-app-host")) {
-      const headers = new Headers(req.headers);
-      headers.delete("x-cb-app-host");
-      const res = NextResponse.next({ request: { headers } });
-      return pathname.startsWith("/app/") ? markCacheable(res, req) : res;
-    }
-    const res = NextResponse.next();
+    const res = secure(NextResponse.next({ request: { headers } }));
     return pathname.startsWith("/app/") ? markCacheable(res, req) : res;
   }
   if (pathname.startsWith("/_next/")) return NextResponse.next();
@@ -52,9 +50,8 @@ export function proxy(req: NextRequest) {
   }
   const url = req.nextUrl.clone();
   url.pathname = `/app/${slug}${pathname === "/" ? "" : pathname}`;
-  const headers = new Headers(req.headers);
   headers.set("x-cb-app-host", slug);
-  return markCacheable(NextResponse.rewrite(url, { request: { headers } }), req);
+  return secure(markCacheable(NextResponse.rewrite(url, { request: { headers } }), req));
 }
 
 export const config = {

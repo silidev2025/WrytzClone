@@ -9,7 +9,7 @@ type Ctx = { params: Promise<{ appId: string }> };
 export const POST = route<Ctx>(async (req, { params }) => {
   const { appId } = await params;
   const user = await requireUser();
-  rateLimit(`presence:${user.id}`, 80, 5_000);
+  await rateLimit(`presence:${user.id}`, 80, 5_000);
   await getEditableApp(user, appId);
   const body = await readJson<Record<string, unknown>>(req, 8_000);
   if (typeof body.clientId !== "string" || !/^[A-Za-z0-9_-]{8,64}$/.test(body.clientId)) throw badRequest("Missing editor id.");

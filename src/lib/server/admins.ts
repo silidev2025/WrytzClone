@@ -4,6 +4,7 @@ import { nowIso } from "@/lib/shared/util";
 import { getStore, type StoreOps } from "./store";
 import { getOwnedApp } from "./apps";
 import { audit } from "./audit";
+import { activeUser } from "./auth";
 import { badRequest, notFound } from "./http";
 
 /*
@@ -143,11 +144,15 @@ export async function inviteInfo(token: string) {
 
 export async function acceptInvite(user: User, token: string, ip?: string) {
   const store = await getStore();
+  const summary = await store.get<Invite>("invites", hash(String(token || "")));
+  if (!summary) throw notFound("This invite link has expired or was already used. Ask for a new one.");
   return store.transaction(async (tx) => {
-    const invite = await tx.get<Invite>("invites", hash(String(token || "")));
-    if (!invite || !live(invite)) throw notFound("This invite link has expired or was already used. Ask for a new one.");
-    const meta = await tx.get<AppMeta>("apps", invite.appId);
+    await activeUser(tx, user.id);
+    const meta = await tx.get<AppMeta>("apps", summary.appId);
     if (!meta) throw notFound("That app doesn't exist anymore.");
+    await activeUser(tx, meta.ownerId);
+    const invite = await tx.get<Invite>("invites", hash(String(token || "")));
+    if (!invite || !live(invite) || invite.appId !== meta.id) throw notFound("This invite link has expired or was already used. Ask for a new one.");
     // single use: the link stops working whatever happens next
     await tx.delete("invites", invite.id);
     if (meta.ownerId === user.id) return { meta, role: "owner" as const };

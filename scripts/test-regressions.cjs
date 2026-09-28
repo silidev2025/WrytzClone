@@ -117,11 +117,12 @@ test('server check-ins are atomic, scoped to their app and owner, and use local 
   const { getStore } = load('src/lib/server/store/index.ts');
   const { createCollection, createRecord, checkInHabit, toRuntimeRecords } = load('src/lib/server/data.ts');
   const store = await getStore();
+  for (const id of ['test-user', 'app-owner', 'someone-else']) await store.put('users', { id });
   const viewer = { user: { id: 'test-user' }, isAdmin: false, timeZone: 'Asia/Manila' };
   const access = { read: 'owner', create: 'users', update: 'owner', delete: 'owner', adjust: 'owner' };
   const habits = await createCollection('test-app', { name: 'Habits', access, fields: [{ name: 'Name', type: 'text' }, { name: 'Goal', type: 'select', options: ['Every day', 'Weekdays', '3 times a week'] }, { name: 'Streak', type: 'number', min: 0 }] });
   const checkins = await createCollection('test-app', { name: 'Check-ins', access, fields: [{ name: 'Habit', type: 'reference', refCollectionId: habits.id }, { name: 'Day', type: 'date' }] });
-  await store.put('apps', { id: 'test-app', templateId: 'habits' });
+  await store.put('apps', { id: 'test-app', templateId: 'habits', ownerId: 'app-owner', published: { slug: 'test-app' } });
   const habit = await createRecord(habits, { Name: 'Test habit', Goal: 'Every day', Streak: 99 }, viewer);
   const results = await Promise.all(Array.from({ length: 8 }, () => checkInHabit('test-app', checkins.id, habit.id, 'Asia/Manila', viewer)));
   assert.equal(results.filter((r) => !r.alreadyDone).length, 1);

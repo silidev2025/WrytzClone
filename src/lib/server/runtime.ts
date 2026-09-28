@@ -5,6 +5,7 @@ import { hasConsent } from "./consent";
 import { appUserId, canRead, listCollections, type Viewer } from "./data";
 import { notFound } from "./http";
 import { previewPassAllows, requestPreviewPass } from "./previewPass";
+import { getStore } from "./store";
 
 /**
  * Who is calling a running app, and may they? Unpublished apps only answer their admins,
@@ -14,6 +15,8 @@ import { previewPassAllows, requestPreviewPass } from "./previewPass";
  */
 export async function runtimeContext(appId: string) {
   const meta = await getAppMeta(appId);
+  const owner = await (await getStore()).get<User>("users", meta.ownerId);
+  if (!owner || owner.suspended || owner.deletingAt) throw notFound("This app is unavailable.");
   const account = await currentUser();
   const viewer = await viewerForApp(meta, account);
   if (!meta.published && !viewer.isAdmin && !(await previewPassAllows(meta, await requestPreviewPass(meta.id)))) throw notFound("This app isn't published.");

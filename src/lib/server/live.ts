@@ -1,6 +1,9 @@
 import type { AppMeta, User } from "@/lib/shared/types";
 import type { Change } from "@/lib/shared/sync";
 import { getStore } from "./store";
+import type { StoreOps } from "./store";
+import { uid } from "@/lib/shared/util";
+import { HttpError } from "./http";
 
 /*
  * Live collaboration hub: everyone with the editor open subscribes to their app's channel
@@ -45,9 +48,10 @@ interface Subscriber {
 interface Channel {
   subs: Set<Subscriber>;
   /** recent numbered events, oldest first */
-  log: { rev: number; event: LiveEvent }[];
+  log: { rev: number; event: LiveEvent; bytes: number }[];
   peers: Map<string, Peer>;
   lock: Promise<unknown>;
+  pending: number;
 }
 
 const LOG_SIZE = 400;
@@ -68,9 +72,14 @@ interface Bridge {
 }
 
 function channel(appId: string): Channel {
+  sweeper();
   let ch = hub.channels.get(appId);
   if (!ch) {
-    ch = { subs: new Set(), log: [], peers: new Map(), lock: Promise.resolve() };
+    if (hub.channels.size >= 500) {
+      for (const [id, old] of hub.channels) if (!old.subs.size && !old.pending) hub.channels.delete(id);
+      if (hub.channels.size >= 500) throw new HttpError(503, "The collaboration server is busy. Please retry shortly.");
+    }
+    ch = { subs: new Set(), log: [], peers: new Map(), lock: Promise.resolve(), pending: 0 };
     hub.channels.set(appId, ch);
   }
   return ch;
@@ -79,20 +88,26 @@ function channel(appId: string): Channel {
 /** Run design writes for one app one at a time, so events leave in revision order. */
 export function withAppLock<T>(appId: string, fn: () => Promise<T>): Promise<T> {
   const ch = channel(appId);
+  ch.pending++;
   const result = ch.lock.then(fn);
-  ch.lock = result.catch(() => undefined);
+  ch.lock = result.catch(() => undefined).finally(() => { ch.pending--; });
   return result;
 }
 
 /* ------------------------------------------------------------------ delivery */
 
 function deliver(appId: string, event: LiveEvent) {
-  const ch = channel(appId);
+  const ch = hub.channels.get(appId);
+  if (!ch?.subs.size) return;
   if (event.type === "change" || event.type === "reload") {
     if (!ch.log.some((e) => e.rev === event.rev)) {
-      ch.log.push({ rev: event.rev, event });
+      ch.log.push({ rev: event.rev, event, bytes: Buffer.byteLength(JSON.stringify(event), "utf8") });
       ch.log.sort((a, b) => a.rev - b.rev);
       if (ch.log.length > LOG_SIZE) ch.log.splice(0, ch.log.length - LOG_SIZE);
+      let bytes = ch.log.reduce((sum, item) => sum + item.bytes, 0);
+      while (bytes > 2_000_000 && ch.log.length) bytes -= ch.log.shift()!.bytes;
+      let total = [...hub.channels.values()].reduce((sum, item) => sum + item.log.reduce((n, e) => n + e.bytes, 0), 0);
+      for (const item of hub.channels.values()) while (total > 16_000_000 && item.log.length) total -= item.log.shift()!.bytes;
     }
   }
   if (event.type === "presence") ch.peers.set(event.peer.clientId, event.peer);
@@ -127,6 +142,9 @@ async function bridge(): Promise<Bridge | null> {
             console.error("[live] bad notification", err);
           }
         })();
+      }, () => {
+        // A database reconnection has no replay guarantee. Closing streams forces hello/catch-up.
+        for (const ch of hub.channels.values()) for (const sub of [...ch.subs]) sub.close();
       });
       return {
         publish: async (payload) => store.notify!(NOTIFY_CHANNEL, payload),
@@ -139,17 +157,45 @@ async function bridge(): Promise<Bridge | null> {
 
 /** Send an event to everyone with this app open (on every server). */
 export async function publish(appId: string, event: LiveEvent) {
-  const b = await bridge().catch(() => null);
-  if (!b) return deliver(appId, event);
+  const store = await getStore();
+  const durable = event.type === "change" || event.type === "reload" || event.type === "data";
+  let id: string | null = null;
+  try {
+    if (durable) id = await queueLiveEvent(store, appId, event);
+    await sendEvent(appId, event);
+    if (id) await store.delete("jobs", id);
+  } catch (err) {
+    console.error("[live] delivery queued for retry", (err as Error).message);
+    deliver(appId, event);
+  }
+}
+
+export async function queueLiveEvent(tx: StoreOps, appId: string, event: LiveEvent) {
+  const id = event.type === "change" || event.type === "reload" ? `live_${appId}_${event.rev}` : uid("live");
+  await tx.put("jobs", { id, kind: "live", appId, event, createdAt: new Date().toISOString() });
+  return id;
+}
+
+export async function retryLiveEvent(job: { id: string; appId: string; event: LiveEvent }) {
+  await sendEvent(job.appId, job.event);
+  await (await getStore()).delete("jobs", job.id);
+}
+
+async function sendEvent(appId: string, event: LiveEvent) {
+  const store = await getStore();
+  // Only subscribers need a dedicated LISTEN connection; writers use their existing pool.
+  if (!store.notify) {
+    if (store.kind === "postgres") throw new Error("Notification connection unavailable");
+    return deliver(appId, event);
+  }
   let payload = JSON.stringify({ appId, event });
-  if (payload.length > NOTIFY_LIMIT) {
+  if (Buffer.byteLength(payload, "utf8") > NOTIFY_LIMIT) {
     // too big for a notification: park it in the database and send a pointer
-    const store = await getStore();
     const id = `lv_${appId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     await store.put("live", { id, appId, at: new Date().toISOString(), event });
     payload = JSON.stringify({ appId, ref: id });
   }
-  await b.publish(payload);
+  await store.notify(NOTIFY_CHANNEL, payload);
 }
 
 /* ------------------------------------------------------------------ subscriptions */
@@ -170,6 +216,8 @@ export function subscribe(appId: string, sub: Subscriber) {
 }
 
 export function connectionCount(appId: string, userId: string) {
+  const total = [...hub.channels.values()].reduce((count, ch) => count + ch.subs.size, 0);
+  if (total >= 256 || (hub.channels.get(appId)?.subs.size || 0) >= 128) throw new HttpError(503, "The collaboration server is busy. Please retry shortly.");
   return [...channel(appId).subs].filter((s) => s.userId === userId).length;
 }
 
@@ -199,9 +247,8 @@ export async function recheckLiveAccess(appId: string) {
 }
 
 /** Records or collections changed (by anyone, including visitors of the live app). */
-export function dataChanged(appId: string, kind: "records" | "collections", collectionId: string | null = null) {
-  if (!hub.channels.get(appId)?.subs.size && !hub.bridge) return;
-  void publish(appId, { type: "data", kind, collectionId }).catch(() => undefined);
+export async function dataChanged(appId: string, kind: "records" | "collections", collectionId: string | null = null) {
+  await publish(appId, { type: "data", kind, collectionId });
 }
 
 /* ------------------------------------------------------------------ presence */
@@ -236,7 +283,7 @@ function sweeper() {
       for (const [appId, ch] of hub.channels) {
         for (const peer of ch.peers.values()) if (Date.now() - peer.at > PEER_TTL) deliver(appId, { type: "leave", clientId: peer.clientId });
         // nobody has this app open: forget its history (a late reconnect reloads the design instead)
-        if (!ch.subs.size && !ch.peers.size) hub.channels.delete(appId);
+        if (!ch.subs.size && !ch.peers.size && !ch.pending) hub.channels.delete(appId);
       }
     }, 20_000).unref?.();
   }

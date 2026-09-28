@@ -13,8 +13,8 @@ export const POST = route<Ctx>(async (req, { params }) => {
   const { appId } = await params;
   const { user, viewer } = await runtimeContext(appId);
   if (!viewer.isAdmin) {
-    rateLimit(`upload:${appId}:${clientIp(req)}`, 20, 60_000);
-    rateLimit(`upload-day:${appId}:${clientIp(req)}`, 200, 24 * 3600_000);
+    await rateLimit(`upload:${appId}:${clientIp(req)}`, 20, 60_000);
+    await rateLimit(`upload-day:${appId}:${clientIp(req)}`, 200, 24 * 3600_000);
   }
   const form = await readForm(req, VISITOR_LIMIT + 64 * 1024);
   const file = form.get("file");

@@ -1,0 +1,12 @@
+*
+!mobile/
+!mobile/expo/
+!mobile/expo/package.json
+!mobile/expo/package-lock.json
+!mobile/expo/App.js
+!mobile/expo/index.js
+!mobile/expo/Dockerfile
+!scripts/
+!scripts/mobile/
+!scripts/mobile/expo.mjs
+!scripts/mobile/expo-container.mjs

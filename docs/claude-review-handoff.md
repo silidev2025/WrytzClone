@@ -2,6 +2,8 @@
 
 Project: `C:\Users\franc\OneDrive\Desktop\wrytz clone`
 
+**2026-09-29 update:** The latest audit remediation, finding-by-finding changes, verification results and remaining deployment work are in [audit-remediation-2026-09-29.md](audit-remediation-2026-09-29.md). Review that document and the current Git diff first. The material below is a historical handoff; its statement that the folder is not a Git repository and its older Expo execution details no longer describe the current workspace.
+
 This handoff covers both implementation batches in this conversation: the earlier audit fixes and the Android/iOS mobile testing deployment workflow. It describes 72 distinct application, configuration, test, and documentation files added or modified across those batches. Some files appear in both batches. This handoff itself is one additional documentation file; preparing it did not change application code.
 
 The project is not a Git repository. The source inventory was reconstructed by comparing retained before/after snapshots and checking the implementation notes. At handoff preparation, the current `src` tree matched the source used for the last mobile-deployment verification. The verification results below are results from the implementation work, not a new rerun during handoff preparation.

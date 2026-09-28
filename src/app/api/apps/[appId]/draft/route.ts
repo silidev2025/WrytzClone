@@ -9,10 +9,5 @@ export const PUT = route<Ctx>(async (req, { params }) => {
   const user = await requireUser();
   const body = await readJson<{ doc?: unknown; baseRevision?: number }>(req, 12_000_000);
   if (!body.doc) throw badRequest("Nothing to save.");
-  try {
-    return await saveDraft(user, appId, body.doc, body.baseRevision);
-  } catch (err) {
-    if (err instanceof Error && !("status" in err)) throw badRequest(err.message);
-    throw err;
-  }
+  return saveDraft(user, appId, body.doc, body.baseRevision);
 });

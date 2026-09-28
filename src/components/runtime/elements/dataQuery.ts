@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import type { DataQuery, El, RuntimeRecord } from "@/lib/shared/types";
-import { evaluate, hasBindings } from "@/lib/shared/expressions";
+import { compareForSort, isDateGroup, numericAggregate, orderGroups } from "@/lib/shared/aggregate";
+import { compareValues, evaluate, hasBindings } from "@/lib/shared/expressions";
 import { useRT } from "../store";
 import { useBindingContext, useRuntimeApi } from "../hooks";
 import { useCached, type QueryBody, type QueryResult } from "../api";
@@ -94,81 +95,50 @@ export function sampleRecord(col: SchemaCollection | undefined): RuntimeRecord {
 
 /* ------------------------------------------------------------------ thumbnails */
 
-function fieldValue(r: RuntimeRecord, name: string): unknown {
-  if (name in r) return r[name];
+function fieldValue(r: RuntimeRecord, name: string, schema?: SchemaCollection): unknown {
+  name = schema?.fields.find((f) => f.id === name)?.name || name;
   const lower = name.toLowerCase();
-  const key = Object.keys(r).find((k) => k.toLowerCase() === lower);
+  const key = name in r ? name : Object.keys(r).find((k) => k.toLowerCase() === lower);
   const v = key ? r[key] : undefined;
   return v && typeof v === "object" && !Array.isArray(v) && "_label" in (v as object) ? (v as { _label: unknown })._label : v;
 }
 
 /** Filter + sort example rows the way the server would, for thumbnails. */
-export function queryRecords(records: RuntimeRecord[], q: DataQuery, limit?: number): RuntimeRecord[] {
+export function queryRecords(records: RuntimeRecord[], q: DataQuery, limit?: number, schema?: SchemaCollection): RuntimeRecord[] {
   let out = records.filter((r) =>
     (q.filters || []).every((f) => {
       if (f.op === "mine") return true;
-      const v = fieldValue(r, f.field);
-      const s = v === null || v === undefined ? "" : Array.isArray(v) ? v.join(",") : String(v);
-      const want = f.value ?? "";
-      switch (f.op) {
-        case "equals":
-          return s.toLowerCase() === want.toLowerCase();
-        case "notEquals":
-          return s.toLowerCase() !== want.toLowerCase();
-        case "contains":
-          return s.toLowerCase().includes(want.toLowerCase());
-        case "greater":
-          return Number(s) > Number(want);
-        case "less":
-          return Number(s) < Number(want);
-        case "isEmpty":
-          return s === "";
-        case "isNotEmpty":
-          return s !== "";
-        case "isTrue":
-          return v === true || s === "true";
-        case "isFalse":
-          return !(v === true || s === "true");
-        default:
-          return true;
-      }
+      if (!["isEmpty", "isNotEmpty", "isTrue", "isFalse"].includes(f.op) && (f.value === undefined || f.value === null || f.value === "")) return true;
+      const v = fieldValue(r, f.field, schema);
+      return compareValues(v, f.op, f.value);
     }),
   );
   const field = q.sortField || "createdAt";
   const dir = q.sortDir === "asc" ? 1 : -1;
+  const type = schema?.fields.find((f) => f.id === field || f.name.toLowerCase() === field.toLowerCase())?.type;
   out = out.slice().sort((a, b) => {
-    const x = fieldValue(a, field);
-    const y = fieldValue(b, field);
-    const nx = Number(x);
-    const ny = Number(y);
-    const numbers = x !== null && y !== null && x !== "" && y !== "" && Number.isFinite(nx) && Number.isFinite(ny);
-    return (numbers ? nx - ny : String(x ?? "").localeCompare(String(y ?? ""))) * dir;
+    const x = fieldValue(a, field, schema);
+    const y = fieldValue(b, field, schema);
+    const compared = compareForSort(x, y, type);
+    return compared !== 0 ? compared * dir : b.createdAt.localeCompare(a.createdAt);
   });
   return limit ? out.slice(0, limit) : out;
 }
 
 /** count / sum / avg … over example rows, optionally grouped (for thumbnail stats and charts). */
-export function aggregateRecords(records: RuntimeRecord[], aggregate: string, field: string | undefined, groupBy?: string): { value: number; groups: { label: string; value: number }[] } {
-  const calc = (rows: RuntimeRecord[]) => {
-    if (aggregate === "count" || !field) return rows.length;
-    const nums = rows.map((r) => Number(fieldValue(r, field))).filter((n) => Number.isFinite(n));
-    if (!nums.length) return 0;
-    if (aggregate === "sum") return nums.reduce((a, b) => a + b, 0);
-    if (aggregate === "avg") return nums.reduce((a, b) => a + b, 0) / nums.length;
-    if (aggregate === "min") return Math.min(...nums);
-    if (aggregate === "max") return Math.max(...nums);
-    return rows.length;
-  };
+export function aggregateRecords(records: RuntimeRecord[], aggregate: string, field: string | undefined, groupBy?: string, schema?: SchemaCollection): { value: number; groups: { label: string; value: number }[] } {
+  const calc = (rows: RuntimeRecord[]) => numericAggregate(rows.map((r) => fieldValue(r, field || "", schema)), field ? aggregate : "count");
   const groups: { label: string; value: number }[] = [];
+  const groupField = schema?.fields.find((f) => f.id === groupBy || f.name.toLowerCase() === groupBy?.toLowerCase());
   if (groupBy) {
     const map = new Map<string, RuntimeRecord[]>();
     for (const r of records) {
-      let v = fieldValue(r, groupBy);
-      if (groupBy === "createdAt" || /^\d{4}-\d{2}-\d{2}/.test(String(v ?? ""))) v = String(v ?? "").slice(0, 10);
-      const labels = Array.isArray(v) ? v.map(String) : [v === null || v === undefined || v === "" ? "(empty)" : String(v)];
-      for (const l of labels) map.set(l, [...(map.get(l) || []), r]);
+      let v = fieldValue(r, groupBy, schema);
+      if (isDateGroup(groupBy, groupField?.type) && typeof v === "string") v = v.slice(0, 10);
+      const labels = Array.isArray(v) ? v.map(String) : [v === null || v === undefined || v === "" ? "(empty)" : typeof v === "boolean" ? (v ? "Yes" : "No") : String(v)];
+      for (const l of labels) { if (!map.has(l)) map.set(l, []); map.get(l)!.push(r); }
     }
     for (const [label, rows] of map) groups.push({ label, value: calc(rows) });
   }
-  return { value: calc(records), groups };
+  return { value: calc(records), groups: orderGroups(groups, groupBy || "", groupField) };
 }

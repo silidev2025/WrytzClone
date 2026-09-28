@@ -36,7 +36,7 @@ export function AuthForm({ initialMode, next, app }: { initialMode: "signin" | "
     try {
       await api(signup ? "/api/auth/signup" : "/api/auth/login", { body: signup ? { name, email, password, acceptTerms: terms, ageOk: age } : { email, password } });
       // coming from an app: ask before sharing who you are with it
-      window.location.href = app ? `/auth?next=${encodeURIComponent(next)}&app=${encodeURIComponent(app.id)}` : next;
+      window.location.href = `/auth?next=${encodeURIComponent(next)}${app ? `&app=${encodeURIComponent(app.id)}` : ""}`;
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);

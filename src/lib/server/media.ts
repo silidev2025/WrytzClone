@@ -2,6 +2,10 @@ import type { AppMeta, Collection, MediaItem, RecordDoc, User } from "@/lib/shar
 import { nowIso, uid } from "@/lib/shared/util";
 import { getStore, type StoreOps } from "./store";
 import { badRequest, forbidden, HttpError, notFound } from "./http";
+import { activeUser } from "./auth";
+import { queueBlobDeletion } from "./blob-cleanup";
+import { UPLOAD_BYTES } from "@/lib/shared/limits";
+import { isOfficePackage } from "./office-file";
 
 /*
  * Two kinds of files:
@@ -13,8 +17,8 @@ import { badRequest, forbidden, HttpError, notFound } from "./http";
  * downloaded (never opened inside the site) and people should treat them with care.
  */
 
-export const EDITOR_LIMIT = 10 * 1024 * 1024;
-export const VISITOR_LIMIT = 5 * 1024 * 1024;
+export const EDITOR_LIMIT = UPLOAD_BYTES;
+export const VISITOR_LIMIT = UPLOAD_BYTES;
 /** storage caps, so one account or app can't fill the disk */
 export const USER_QUOTA = 500 * 1024 * 1024;
 export const APP_ATTACHMENT_QUOTA = 1024 * 1024 * 1024;
@@ -39,6 +43,11 @@ function sniff(buf: Buffer): string | null {
   if (b.length >= 6 && b.toString("ascii", 0, 4) === "GIF8") return "image/gif";
   if (b.length >= 12 && b.toString("ascii", 0, 4) === "RIFF" && b.toString("ascii", 8, 12) === "WEBP") return "image/webp";
   if (b.length >= 12 && b.toString("ascii", 4, 8) === "ftyp" && /avif|avis/.test(b.toString("ascii", 8, 12))) return "image/avif";
+  if (b.length >= 12 && b.toString("ascii", 4, 8) === "ftyp" && /isom|iso[2-9]|mp4[12]|avc1|M4V /.test(b.toString("ascii", 8, 12))) return "video/mp4";
+  if (b.length >= 12 && b.toString("ascii", 0, 4) === "RIFF" && b.toString("ascii", 8, 12) === "WAVE") return "audio/wav";
+  if (b.length >= 4 && b.toString("ascii", 0, 4) === "OggS") return "audio/ogg";
+  if (b.length >= 4 && (b.toString("ascii", 0, 3) === "ID3" || (b[0] === 0xff && (b[1] & 0xe0) === 0xe0 && (b[1] & 6) !== 0))) return "audio/mpeg";
+  if (b.length >= 12 && b.readUInt32BE(0) === 0x1a45dfa3 && b.subarray(0, 4096).includes(Buffer.from("webm"))) return "video/webm";
   if (b.length >= 5 && b.toString("ascii", 0, 5) === "%PDF-") return "application/pdf";
   if (b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04) return "zip";
   if (b.length >= 8 && b.readUInt32BE(0) === 0xd0cf11e0 && b.readUInt32BE(4) === 0xa1b11ae1) return "ole";
@@ -55,10 +64,10 @@ function checkedType(buf: Buffer, declared: string, name: string, allowed: strin
   if (sniffed === "zip") {
     // Word/Excel/PowerPoint files are zip files; a plain .zip is not accepted
     const byExt: Record<string, string> = { docx: OFFICE_TYPES[1], xlsx: OFFICE_TYPES[2], pptx: OFFICE_TYPES[3] };
-    if (!byExt[ext] || declared === "application/zip") throw badRequest("That file type isn't supported.");
+    if (!byExt[ext] || !isOfficePackage(buf, ext)) throw badRequest("That is not a supported Office document. Export it as DOCX, XLSX or PPTX and try again.");
     mime = byExt[ext];
   } else if (sniffed === "ole") {
-    if (ext !== "doc") throw badRequest("That file type isn't supported.");
+    if (ext !== "doc" || buf.length < 512 || buf.readUInt16LE(28) !== 0xfffe || !buf.includes(Buffer.from("WordDocument", "utf16le"))) throw badRequest("That file doesn't match a Word document.");
     mime = OFFICE_TYPES[0];
   } else if (sniffed) {
     mime = sniffed;
@@ -69,7 +78,7 @@ function checkedType(buf: Buffer, declared: string, name: string, allowed: strin
     if (mime === "text/plain" || mime === "text/csv") {
       if (buf.subarray(0, 8192).includes(0)) throw badRequest("That doesn't look like a text file.");
     } else if (mime.startsWith("video/") || mime.startsWith("audio/")) {
-      /* editor media: accepted as declared, always served with nosniff */
+      throw badRequest("That audio or video file doesn't match its type.");
     }
   }
   if (!allowed.includes(mime)) throw badRequest("That file type isn't supported. Try an image, a PDF or an office document.");
@@ -101,14 +110,6 @@ async function save(
   const buf = Buffer.from(await file.arrayBuffer());
   const mime = checkedType(buf, file.type, name, opts.allowed);
 
-  const store = await getStore();
-  if (opts.attachment && opts.appId) {
-    const used = await usedBytes((m) => !m.public, await store.find<MediaItem>("media", "appId", opts.appId));
-    if (used + file.size > APP_ATTACHMENT_QUOTA) throw new HttpError(413, "This app has no room for more files. Its owner can free space by deleting records with attachments.");
-  } else if (opts.owner) {
-    const used = await usedBytes((m) => m.public, await store.find<MediaItem>("media", "ownerId", opts.owner.id));
-    if (used + file.size > USER_QUOTA) throw new HttpError(413, `You've used your ${Math.round(USER_QUOTA / 1024 / 1024)} MB of uploads. Delete some files first.`);
-  }
   const item: MediaItem = {
     id: uid("med", 16),
     ownerId: opts.owner?.id || "visitor",
@@ -124,32 +125,72 @@ async function save(
     item.fieldId = opts.attachment.fieldId;
     item.uploaderId = opts.owner?.id ?? null;
   }
-  await store.putBlob(item.id, buf);
-  await store.put("media", item);
+  await persistFile(item, buf);
   return item;
+}
+
+async function persistFile(item: MediaItem, bytes: Buffer, copying = false) {
+  const store = await getStore();
+  await store.transaction(async (tx) => {
+    const owner = item.ownerId === "visitor" ? null : await activeUser(tx, item.ownerId);
+    if (item.appId && !copying) {
+      const app = await tx.get<AppMeta>("apps", item.appId);
+      if (!app) throw notFound("That app no longer exists.");
+      await activeUser(tx, app.ownerId);
+      const admin = !!owner && (app.ownerId === owner.id || (app.editorIds || []).includes(owner.id) || (app.adminIds || []).includes(owner.id));
+      if (item.public && (!owner || (app.ownerId !== owner.id && !(app.editorIds || []).includes(owner.id)))) throw forbidden();
+      if (!item.public) {
+        const col = item.collectionId ? await tx.get<Collection>("collections", item.collectionId) : null;
+        const field = col?.fields.find((f) => f.id === item.fieldId && (f.type === "file" || f.type === "image"));
+        const permits = (level: string) => level === "anyone" || (!!owner && (level === "users" || level === "owner"));
+        if (!col || !field || col.appId !== app.id || (!admin && (!app.published || (!permits(col.access.create) && !permits(col.access.update))))) throw forbidden("You can't add files here.");
+      }
+    }
+    const files = item.public ? await tx.find<MediaItem>("media", "ownerId", item.ownerId) : await tx.find<MediaItem>("media", "appId", item.appId!);
+    const used = await usedBytes((m) => m.public === item.public, files);
+    if (used + bytes.length > (item.public ? USER_QUOTA : APP_ATTACHMENT_QUOTA)) throw new HttpError(413, "There is not enough storage for these files. Delete unused files first.");
+    await tx.put("media", { ...item, pending: true });
+    await tx.put("blobDeletes", { id: item.id, createdAt: nowIso(), notBefore: Date.now() + 86400_000 });
+  });
+  try {
+    await store.putBlob(item.id, bytes);
+    if (!copying) await store.transaction(async (tx) => {
+      const reserved = await tx.get<MediaItem>("media", item.id);
+      if (!reserved) throw notFound("This upload was cancelled.");
+      await tx.put("media", { ...reserved, pending: false });
+      await tx.delete("blobDeletes", item.id);
+    });
+  } catch (err) {
+    await discardCopiedFiles(new Map([[item.id, item.id]])).catch(() => undefined);
+    throw err;
+  }
 }
 
 export async function listMedia(user: User, appId?: string | null) {
   const store = await getStore();
   const mine = await store.find<MediaItem>("media", "ownerId", user.id);
   return mine
-    .filter((m) => m.public && (!appId || m.appId === appId || m.appId === null))
+    .filter((m) => m.public && !m.pending && (!appId || m.appId === appId || m.appId === null))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 /** The uploader, or the owner/admins of the app a file belongs to, may delete it. */
 export async function deleteMedia(user: User, id: string, isAppAdmin: (meta: AppMeta) => boolean) {
   const store = await getStore();
-  const item = await store.get<MediaItem>("media", id);
+  const item = await store.transaction(async (tx) => {
+  await activeUser(tx, user.id);
+  const item = await tx.get<MediaItem>("media", id);
   if (!item) throw notFound("That file doesn't exist anymore.");
   let allowed = item.ownerId === user.id;
   if (!allowed && item.appId) {
-    const meta = await store.get<AppMeta>("apps", item.appId);
+    const meta = await tx.get<AppMeta>("apps", item.appId);
     allowed = !!meta && isAppAdmin(meta);
   }
   if (!allowed) throw forbidden();
-  await store.delete("media", id);
-  await store.deleteBlob(id);
+  await queueBlobDeletion(tx, id); await tx.delete("media", id);
+  return item;
+  });
+  await deleteBlobs([id]);
   return item;
 }
 
@@ -180,20 +221,26 @@ export function attachmentIds(col: Collection, data: Record<string, unknown>): s
  * Link fresh attachments to the record that now uses them (their read access follows the
  * record from then on), and drop attachments the record no longer uses.
  */
-export async function syncAttachments(tx: StoreOps, col: Collection, rec: RecordDoc, uploaderId: string | null, before?: Record<string, unknown>) {
+export async function syncAttachments(tx: StoreOps, col: Collection, rec: RecordDoc, uploaderId: string | null, before?: Record<string, unknown>, previousFields = col.fields) {
   const now = attachmentIds(col, rec.data);
   for (const id of now) {
     const m = await tx.get<MediaItem>("media", id);
     if (!m || m.public || m.appId !== col.appId || m.collectionId !== col.id) continue;
     if (m.recordId && m.recordId !== rec.id) continue; // already belongs to another record
     if (!m.recordId && (m.uploaderId ?? null) !== (uploaderId ?? null)) continue; // someone else's upload
-    if (m.recordId !== rec.id) await tx.put("media", { ...m, recordId: rec.id });
+    const fields = col.fields.filter((f) => (f.type === "file" || f.type === "image") && rec.data[f.id] === `/api/media/${id}`);
+    // One attachment belongs to one field. Otherwise a public reference could bypass a private one.
+    if (fields.length !== 1) throw badRequest("An attachment can only be linked to one field. Upload a separate copy for another field.");
+    if (m.recordId !== rec.id || m.fieldId !== fields[0].id) await tx.put("media", { ...m, recordId: rec.id, fieldId: fields[0].id });
   }
   if (before) {
-    const gone = attachmentIds(col, before).filter((id) => !now.includes(id));
+    const gone = attachmentIds({ ...col, fields: previousFields }, before).filter((id) => !now.includes(id));
     for (const id of gone) {
       const m = await tx.get<MediaItem>("media", id);
-      if (m && !m.public && m.recordId === rec.id) await tx.delete("media", id);
+      if (m && !m.public && m.recordId === rec.id) {
+        await tx.put("blobDeletes", { id, createdAt: nowIso() });
+        await tx.delete("media", id);
+      }
     }
   }
 }
@@ -205,24 +252,45 @@ export async function attachmentsOf(tx: StoreOps, recordId: string): Promise<Med
 
 export async function deleteBlobs(ids: string[]) {
   const store = await getStore();
-  for (const id of ids) await store.deleteBlob(id);
+  for (const id of ids) {
+    // Failed deletion remains queued for maintenance.
+    await store.put("blobDeletes", { id, createdAt: nowIso() });
+    await store.deleteBlob(id).then(() => store.delete("blobDeletes", id)).catch((err) => console.error("[media] deletion queued", id, err));
+  }
 }
 
 /** Copy design files so a duplicated or remixed app doesn't depend on the original's. */
-export async function copyDesignFiles(doc: unknown, toOwner: User, toAppId: string): Promise<Map<string, string>> {
+export async function copyDesignFiles(doc: unknown, toOwner: User, toAppId: string, attachmentAppId?: string): Promise<Map<string, string>> {
   const store = await getStore();
   const text = JSON.stringify(doc);
   const ids = Array.from(new Set(Array.from(text.matchAll(/\/api\/media\/(med_[A-Za-z0-9]+)/g), (m) => m[1])));
+  if (attachmentAppId) for (const item of await store.find<MediaItem>("media", "appId", attachmentAppId)) if (!item.public && item.recordId && !item.pending && !ids.includes(item.id)) ids.push(item.id);
   const map = new Map<string, string>();
-  for (const id of ids.slice(0, 500)) {
+  try { for (const id of ids) {
     const m = await store.get<MediaItem>("media", id);
-    if (!m || !m.public) continue;
+    if (!m || m.pending || (!m.public && m.appId !== attachmentAppId)) continue;
     const data = await store.getBlob(id);
     if (!data) continue;
-    const copy: MediaItem = { ...m, id: uid("med", 16), ownerId: toOwner.id, appId: toAppId, createdAt: nowIso() };
-    await store.putBlob(copy.id, data);
-    await store.put("media", copy);
+    const copy: MediaItem = { ...m, id: uid("med", 16), ownerId: toOwner.id, appId: toAppId, uploaderId: m.public ? undefined : toOwner.id, createdAt: nowIso(), pending: true };
+    await persistFile(copy, data, true);
     map.set(id, copy.id);
-  }
+  } } catch (err) { await discardCopiedFiles(map); throw err; }
   return map;
+}
+
+export async function finishCopiedFiles(tx: StoreOps, files: Map<string, string>) {
+  for (const id of files.values()) {
+    const item = await tx.get<MediaItem>("media", id);
+    if (!item) throw notFound("A file changed while copying. Please try again.");
+    await tx.put("media", { ...item, pending: false });
+    await tx.delete("blobDeletes", id);
+  }
+}
+
+export async function discardCopiedFiles(files: Map<string, string>) {
+  const store = await getStore();
+  await store.transaction(async (tx) => {
+    for (const id of files.values()) { await queueBlobDeletion(tx, id); await tx.delete("media", id); }
+  });
+  await deleteBlobs([...files.values()]);
 }

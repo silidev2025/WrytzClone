@@ -285,7 +285,7 @@ export function Topbar({ onPreview, onPublish, onVersions, onShortcuts, onShare 
         <button className="icon-btn" onClick={onVersions} title="Version history" aria-label="Version history">
           <History size={17} />
         </button>
-        <button className="btn sm" onClick={onPreview}>
+          <button className="btn sm" onClick={onPreview} aria-label="Preview app">
           <Eye size={15} /> <span className="hide-phone">Preview</span>
         </button>
         <button className="btn gradient sm" onClick={onPublish}>

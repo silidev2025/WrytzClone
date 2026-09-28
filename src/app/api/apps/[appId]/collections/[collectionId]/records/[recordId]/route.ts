@@ -13,6 +13,6 @@ export const PATCH = route<Ctx>(async (req, { params }) => {
   const col = await getCollection(appId, collectionId);
   const body = await readJson<{ values?: Record<string, unknown> }>(req);
   const record = makerRecord(appId, await updateRecord(col, recordId, body.values || {}, { user, isAdmin: true }));
-  dataChanged(appId, "records", col.id);
+  await dataChanged(appId, "records", col.id);
   return { record };
 });

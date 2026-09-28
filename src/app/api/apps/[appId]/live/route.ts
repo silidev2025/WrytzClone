@@ -1,6 +1,6 @@
 import type { AppMeta, User } from "@/lib/shared/types";
 import { UNIT_KEY, type Change } from "@/lib/shared/sync";
-import { currentSessionId, requireUser, type Session } from "@/lib/server/auth";
+import { currentSessionId, hashToken, requireUser, type Session } from "@/lib/server/auth";
 import { applyLiveChanges, canEditApp, getEditableApp } from "@/lib/server/apps";
 import { catchUp, connectionCount, ready as liveReady, subscribe, type LiveEvent } from "@/lib/server/live";
 import { getStore } from "@/lib/server/store";
@@ -36,9 +36,10 @@ export const GET = route<Ctx>(async (req, { params }) => {
     const session = sessionId ? await store.get<Session>("sessions", sessionId) : null;
     if (!session || Date.parse(session.expiresAt) < Date.now()) return false;
     const u = await store.get<User>("users", session.userId);
-    if (!u || u.suspended || (u.passwordChangedAt && session.createdAt < u.passwordChangedAt)) return false;
+    if (!u || u.suspended || u.deletingAt || (session.credentialVersion ? session.credentialVersion !== hashToken(u.passwordHash) : u.passwordChangedAt && session.createdAt <= u.passwordChangedAt)) return false;
     const meta = await store.get<AppMeta>("apps", appId);
-    return !!meta && canEditApp(meta, u);
+    const owner = meta ? await store.get<User>("users", meta.ownerId) : null;
+    return !!meta && !!owner && !owner.deletingAt && !owner.suspended && canEditApp(meta, u);
   };
 
   const encoder = new TextEncoder();
@@ -48,6 +49,7 @@ export const GET = route<Ctx>(async (req, { params }) => {
       let closed = false;
       const write = (text: string) => {
         if (closed) return;
+        if ((controller.desiredSize ?? 0) <= 0) { stop(); return; }
         try {
           controller.enqueue(encoder.encode(text));
         } catch {
@@ -56,7 +58,9 @@ export const GET = route<Ctx>(async (req, { params }) => {
       };
       const send = (e: LiveEvent) => {
         const id = e.type === "change" || e.type === "reload" ? `id: ${e.rev}\n` : "";
-        write(`${id}event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
+        const message = `${id}event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`;
+        if (encoder.encode(message).byteLength > 256_000) write('event: resync\ndata: {}\n\n');
+        else write(message);
       };
       // events that arrive while we work out what this tab missed wait here
       const queue: LiveEvent[] = [];
@@ -64,7 +68,11 @@ export const GET = route<Ctx>(async (req, { params }) => {
       const unsubscribe = subscribe(appId, {
         clientId,
         userId: user.id,
-        send: (e) => (ready ? send(e) : queue.push(e)),
+        send: (e) => {
+          if (ready) send(e);
+          else if (queue.length < 100) queue.push(e);
+          else stop();
+        },
         check,
         close: () => stop(),
       });
@@ -79,11 +87,13 @@ export const GET = route<Ctx>(async (req, { params }) => {
             }
           });
       }, 30_000);
+      const onAbort = () => stop();
       stop = () => {
         if (closed) return;
         closed = true;
         clearInterval(ping);
         clearInterval(recheck);
+        req.signal.removeEventListener("abort", onAbort);
         unsubscribe();
         try {
           controller.close();
@@ -91,7 +101,7 @@ export const GET = route<Ctx>(async (req, { params }) => {
           /* already closed */
         }
       };
-      req.signal.addEventListener("abort", () => stop());
+      req.signal.addEventListener("abort", onAbort, { once: true });
       // close a little before the host would, so the reconnect is clean
       const lifetime = process.env.VERCEL ? setTimeout(() => stop(), 280_000) : null;
       const prevStop = stop;
@@ -100,22 +110,29 @@ export const GET = route<Ctx>(async (req, { params }) => {
         prevStop();
       };
 
-      // listen to other servers before working out what this tab missed
-      await liveReady();
-      const draft = await (await getStore()).get<{ id: string; revision: number }>("drafts", appId);
-      const rev = draft?.revision ?? 0;
-      const since = Number.isFinite(lastId) ? lastId : rev;
-      const { peers, events } = catchUp(appId, since, rev);
-      write("retry: 3000\n\n");
-      write(`event: hello\ndata: ${JSON.stringify({ rev, peers, resync: events === null })}\n\n`);
-      for (const e of events ?? []) send(e);
-      ready = true;
-      for (const e of queue.splice(0)) send(e);
+      try {
+        if (req.signal.aborted) { stop(); return; }
+        // Listen to other servers before working out what this tab missed.
+        await liveReady();
+        const draft = await (await getStore()).get<{ id: string; revision: number }>("drafts", appId);
+        if (closed) return;
+        const rev = draft?.revision ?? 0;
+        const since = Number.isFinite(lastId) ? lastId : rev;
+        const { peers, events } = catchUp(appId, since, rev);
+        write("retry: 3000\n\n");
+        write(`event: hello\ndata: ${JSON.stringify({ rev, peers, resync: events === null })}\n\n`);
+        for (const e of events ?? []) send(e);
+        ready = true;
+        for (const e of queue.splice(0)) send(e);
+      } catch (err) {
+        console.error("[live] stream initialization failed", err);
+        stop();
+      }
     },
     cancel() {
       stop();
     },
-  });
+  }, { highWaterMark: 512_000, size: (chunk) => chunk.byteLength });
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",
@@ -130,7 +147,7 @@ export const GET = route<Ctx>(async (req, { params }) => {
 export const POST = route<Ctx>(async (req, { params }) => {
   const { appId } = await params;
   const user = await requireUser();
-  rateLimit(`live:${user.id}`, 300, 10_000);
+  await rateLimit(`live:${user.id}`, 300, 10_000);
   const body = await readJson<{ clientId?: unknown; changes?: unknown }>(req, 8_000_000);
   if (typeof body.clientId !== "string" || !CLIENT_ID.test(body.clientId)) throw badRequest("Missing editor id.");
   if (!Array.isArray(body.changes) || body.changes.length === 0 || body.changes.length > 5000) throw badRequest("Nothing to save.");
@@ -142,5 +159,5 @@ export const POST = route<Ctx>(async (req, { params }) => {
     changes.push({ k: c.k, v: c.v === undefined ? null : c.v });
   }
   const result = await applyLiveChanges(user, appId, body.clientId, changes);
-  return result.event ?? { type: "ack", rev: result.rev, accepted: result.accepted, adjusted: result.adjusted };
+  return result.event ?? { type: "ack", rev: result.rev, accepted: result.accepted, adjusted: result.adjusted, changes: result.changes };
 });

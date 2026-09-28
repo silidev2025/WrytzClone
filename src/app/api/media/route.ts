@@ -13,7 +13,7 @@ export const GET = route(async (req) => {
 /** Design files (images for pages) uploaded in the editor. */
 export const POST = route(async (req) => {
   const user = await requireUser();
-  rateLimit(`design-upload:${user.id}`, 60, 60_000);
+  await rateLimit(`design-upload:${user.id}`, 60, 60_000);
   const form = await readForm(req, EDITOR_LIMIT + 64 * 1024);
   const file = form.get("file");
   const appId = form.get("appId");

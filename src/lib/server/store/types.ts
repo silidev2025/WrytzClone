@@ -23,7 +23,11 @@ export type Table =
   | "mobileDeployments"
   | "mobileWorkers"
   /** live-collaboration events too big for a Postgres notification (kept for an hour) */
-  | "live";
+  | "live"
+  | "rateLimits"
+  | "idempotency"
+  | "blobDeletes"
+  | "jobs";
 
 export interface Doc {
   id: string;
@@ -45,7 +49,7 @@ export const INDEXES: Record<Table, Record<string, (doc: any) => string | null |
   published: {},
   versions: { appId: (d) => d.appId },
   collections: { appId: (d) => d.appId },
-  records: { collectionId: (d) => d.collectionId, appId: (d) => d.appId },
+  records: { collectionId: (d) => d.collectionId, appId: (d) => d.appId, createdBy: (d) => d.createdBy },
   media: { ownerId: (d) => d.ownerId, appId: (d) => d.appId, recordId: (d) => d.recordId ?? null },
   memberships: { appId: (d) => d.appId, userId: (d) => d.userId },
   invites: { appId: (d) => d.appId },
@@ -56,6 +60,10 @@ export const INDEXES: Record<Table, Record<string, (doc: any) => string | null |
   mobileDeployments: { appId: (d) => d.appId, status: (d) => d.status },
   mobileWorkers: {},
   live: { appId: (d) => d.appId },
+  rateLimits: {},
+  idempotency: {},
+  blobDeletes: {},
+  jobs: { kind: (d) => d.kind },
 };
 
 /** Values that must be unique across a table (enforced by the database with Postgres). */
@@ -65,11 +73,15 @@ export const UNIQUE: Partial<Record<Table, string[]>> = {
 };
 
 export interface StoreOps {
+  recordPage?(options: { collectionId: string; ownerId?: string; ids?: string[]; offset: number; limit: number; ascending: boolean }): Promise<{ records: import("@/lib/shared/types").RecordDoc[]; total: number }>;
   get<T extends Doc>(table: Table, id: string): Promise<T | null>;
   put<T extends Doc>(table: Table, doc: T): Promise<void>;
   delete(table: Table, id: string): Promise<void>;
   /** Documents whose index `index` equals `value`. */
   find<T extends Doc>(table: Table, index: string, value: string): Promise<T[]>;
+  count(table: Table, index: string, value: string): Promise<number>;
+  /** Stable ID pagination; suitable for exports and bounded maintenance work. */
+  page<T extends Doc>(table: Table, options?: { index?: string; value?: string; after?: string; limit?: number }): Promise<T[]>;
   /** Delete every document whose index equals value; returns how many. */
   deleteWhere(table: Table, index: string, value: string): Promise<number>;
   /**
@@ -79,18 +91,20 @@ export interface StoreOps {
   claimUnique?(scope: string, value: string, docId: string): Promise<void>;
   /** Free a document's reservation in a scope (all scopes when scope is ""). */
   releaseUnique?(scope: string, docId: string): Promise<void>;
+  releaseUniqueScope?(scope: string): Promise<void>;
 }
 
 export interface Store extends StoreOps {
   kind: "json" | "postgres";
-  /** Run `fn` atomically: all writes happen or none do, and nothing else interleaves. */
+  /** Atomic, serializable writes. PostgreSQL may retry fn: keep external effects outside it. */
   transaction<R>(fn: (tx: StoreOps) => Promise<R>): Promise<R>;
+  consumeRateLimit(key: string, limit: number, windowMs: number): Promise<boolean>;
   putBlob(id: string, data: Buffer): Promise<void>;
-  getBlob(id: string): Promise<Buffer | null>;
+  getBlob(id: string, range?: { start: number; end: number }): Promise<Buffer | null>;
   deleteBlob(id: string): Promise<void>;
   /** Every document of a table (maintenance jobs only). */
   scan<T extends Doc>(table: Table): Promise<T[]>;
   /** Postgres only: tell every server something happened (LISTEN/NOTIFY). */
   notify?(channel: string, payload: string): Promise<void>;
-  listen?(channel: string, onMessage: (payload: string) => void): Promise<void>;
+  listen?(channel: string, onMessage: (payload: string) => void, onReconnect?: () => void): Promise<void>;
 }

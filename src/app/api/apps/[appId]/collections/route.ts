@@ -20,7 +20,7 @@ export const POST = route<Ctx>(async (req, { params }) => {
   const body = await readJson<Record<string, unknown>>(req);
   // only these are taken from the request; the id is always made by the server
   const { name, fields, access, icon, stock } = body;
-  const collection = await createCollection(appId, { name, fields, access, icon, stock });
-  dataChanged(appId, "collections", collection.id);
+  const collection = await createCollection(appId, { name, fields, access, icon, stock }, undefined, undefined, user);
+  await dataChanged(appId, "collections", collection.id);
   return { collection };
 });

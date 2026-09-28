@@ -26,7 +26,7 @@ export const LEGAL = {
 
 /** True when the details needed for real users are filled in. */
 export function legalReady(): boolean {
-  return !!(LEGAL.operatorName && LEGAL.supportEmail && LEGAL.privacyEmail);
+  return !!(LEGAL.operatorName && LEGAL.operatorAddress && LEGAL.supportEmail && LEGAL.privacyEmail);
 }
 
 export function contactLine(): string {
