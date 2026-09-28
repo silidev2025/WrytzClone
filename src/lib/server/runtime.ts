@@ -4,9 +4,11 @@ import { getAppMeta, viewerFor } from "./apps";
 import { hasConsent } from "./consent";
 import { appUserId, canRead, listCollections, type Viewer } from "./data";
 import { notFound } from "./http";
+import { previewPassAllows, requestPreviewPass } from "./previewPass";
 
 /**
- * Who is calling a running app, and may they? Unpublished apps only answer their admins.
+ * Who is calling a running app, and may they? Unpublished apps only answer their admins,
+ * and devices holding a preview pass from one of its editors (the QR code in Preview).
  * Signed-in people count as signed in *for this app* only after they chose to continue to
  * it (or when they run it); until then the app treats them like any visitor.
  */
@@ -14,7 +16,7 @@ export async function runtimeContext(appId: string) {
   const meta = await getAppMeta(appId);
   const account = await currentUser();
   const viewer = await viewerForApp(meta, account);
-  if (!meta.published && !viewer.isAdmin) throw notFound("This app isn't published.");
+  if (!meta.published && !viewer.isAdmin && !(await previewPassAllows(meta, await requestPreviewPass(meta.id)))) throw notFound("This app isn't published.");
   return { meta, user: viewer.user, viewer, signedInElsewhere: !!account && !viewer.user };
 }
 

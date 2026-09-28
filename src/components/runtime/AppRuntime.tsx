@@ -42,6 +42,7 @@ export function AppRuntime({
   basePath,
   path,
   session,
+  editorLink = true,
 }: {
   mode: "preview" | "live";
   appId: string;
@@ -50,6 +51,8 @@ export function AppRuntime({
   basePath: string;
   path: string[];
   session: RuntimeSession;
+  /** preview only: link back to the editor (off for a device that opened the preview with a pass) */
+  editorLink?: boolean;
 }) {
   const storeRef = useRef<RTStore | null>(null);
   const initial = useMemo(() => resolvePath(doc, path), [doc, path]);
@@ -281,7 +284,12 @@ export function AppRuntime({
             Report
           </a>
         )}
-        {mode === "preview" && (
+        {mode === "preview" && !editorLink && (
+          <span className="rt-preview-chip">
+            <Icon name="Eye" size={13} /> Preview
+          </span>
+        )}
+        {mode === "preview" && editorLink && (
           <a className="rt-preview-chip" href={`/editor/${appId}`}>
             <Icon name="Eye" size={13} /> Preview · back to editor
           </a>

@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Laptop, Maximize2, Monitor, QrCode, RotateCw, Smartphone, Tablet } from "lucide-react";
+import { api, errorMessage } from "@/lib/client/api";
+import { toast } from "@/components/ui/toast";
 
 /*
  * Test an app on a specific device: the preview loads in a frame of that device's real screen
@@ -57,11 +59,12 @@ function remembered(): { id: string; landscape: boolean; custom: { w: number; h:
 
 const clampSize = (n: number) => Math.max(240, Math.min(3840, Math.round(n) || 0));
 
-export function DevicePreview({ src, reloadKey, phoneApp }: { src: string; reloadKey: number; phoneApp: boolean }) {
+export function DevicePreview({ appId, src, reloadKey, phoneApp }: { appId: string; src: string; reloadKey: number; phoneApp: boolean }) {
   const [choice, setChoice] = useState(() => (typeof window === "undefined" ? { id: "iphone-15", landscape: false, custom: { w: 1024, h: 768 } } : remembered()));
   const [actualSize, setActualSize] = useState(false);
   const [stage, setStage] = useState({ w: 0, h: 0 });
   const [qr, setQr] = useState<string | null>(null);
+  const [qrBusy, setQrBusy] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -92,6 +95,25 @@ export function DevicePreview({ src, reloadKey, phoneApp }: { src: string; reloa
   const scale = fit || actualSize || !stage.w ? 1 : Math.min(1, (stage.w - 32) / (w + bezel * 2), (stage.h - 32) / (h + bezel * 2));
   const url = typeof window !== "undefined" ? new URL(src, window.location.origin).href : src;
   const local = /localhost|127\.0\.0\.1|\[::1\]/.test(url);
+
+  // The QR code carries a one-hour preview pass, so the phone that scans it doesn't need to be
+  // signed in to this account (a phone signed in to another account would otherwise be refused).
+  const toggleQr = async () => {
+    if (qr) return setQr(null);
+    setQrBusy(true);
+    try {
+      const { pass } = await api<{ pass: string; expiresAt: string }>(`/api/apps/${appId}/preview-pass`, { body: {} });
+      const origin = window.location.origin;
+      const page = new URL(src, origin).pathname.slice(`/preview/${appId}`.length);
+      const link = `${origin}/api/apps/${appId}/preview-pass/open?pass=${encodeURIComponent(pass)}${page ? `&path=${encodeURIComponent(page)}` : ""}`;
+      const { toDataURL } = await import("qrcode");
+      setQr(await toDataURL(link, { width: 240, margin: 2, errorCorrectionLevel: "L" }));
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setQrBusy(false);
+    }
+  };
 
   return (
     <div className="device-preview">
@@ -129,15 +151,15 @@ export function DevicePreview({ src, reloadKey, phoneApp }: { src: string; reloa
             <Maximize2 size={14} /> {actualSize ? "Actual size" : `Fit · ${Math.round(scale * 100)}%`}
           </button>
         )}
-        <button className="btn sm" onClick={() => (qr ? setQr(null) : void import("qrcode").then((m) => m.toDataURL(url, { width: 176, margin: 2 })).then(setQr))} aria-pressed={!!qr} title="Open this preview on a real device">
+        <button className="btn sm" onClick={() => void toggleQr()} disabled={qrBusy} aria-pressed={!!qr} title="Open this preview on a real device">
           <QrCode size={14} /> On a real device
         </button>
       </div>
       {qr && (
         <div className="device-qr">
-          <img src={qr} alt="QR code for this preview" width={132} height={132} />
+          <img src={qr} alt="QR code for this preview" width={160} height={160} />
           <span>
-            Scan to open this preview on your phone or tablet (sign in with an account that can edit this app).
+            Scan with your phone or tablet camera. It opens this draft for one hour without signing in on that device, so only show the code to people you trust.
             {local && <strong> This address only works on this computer: publish the app, or run the site on your network, to test on other devices.</strong>}
             {phoneApp && " Phone apps can also be installed from the published link."}
           </span>

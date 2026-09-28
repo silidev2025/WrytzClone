@@ -163,7 +163,7 @@ export function PreviewDialog({ open, onClose }: { open: boolean; onClose: () =>
         </>
       }
     >
-      {ready ? <DevicePreview src={src} reloadKey={key} phoneApp={phoneApp} /> : <span className="spinner" />}
+      {ready ? <DevicePreview appId={appId} src={src} reloadKey={key} phoneApp={phoneApp} /> : <span className="spinner" />}
     </Modal>
   );
 }
