@@ -72,9 +72,10 @@ export function OperatorPanel({ checks }: { checks: { ok: boolean; label: string
     }
   };
   return (
-    <div className="page" style={{ maxWidth: 960 }}>
+    <div className="page" style={{ maxWidth: 960, margin: "0 auto" }}>
       <div className="page-head">
         <div>
+          <div className="eyebrow">Operator</div>
           <h1 className="page-title">Reports, moderation and setup</h1>
           <p className="page-sub">Only the accounts listed in OPERATOR_IDS can open this page.</p>
         </div>

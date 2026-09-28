@@ -1,16 +1,12 @@
 import Link from "next/link";
 import { BRAND } from "@/lib/shared/brand";
 
-/** The mark: a stack of two cards, the front one with an inverted title bar — the product in one glyph. */
 export function BrandMark({ size = 30 }: { size?: number }) {
   return (
-    <span className="brandmark" style={{ width: size, height: size }}>
-      <svg viewBox="0 0 32 32" aria-hidden="true" shapeRendering="crispEdges" style={{ width: size, height: size }}>
-        <rect x="10" y="3" width="19" height="16" rx="1.5" style={{ fill: "var(--paper)" }} stroke="currentColor" strokeWidth="2" />
-        <rect x="3" y="11" width="19" height="17" rx="1.5" style={{ fill: "var(--paper)" }} stroke="currentColor" strokeWidth="2" />
-        <rect x="3" y="11" width="19" height="5" fill="currentColor" />
-        <rect x="6" y="20" width="9" height="2" fill="currentColor" />
-        <rect x="6" y="24" width="12" height="2" fill="currentColor" />
+    <span className="brandmark" style={{ width: size, height: size, borderRadius: size * 0.3 }}>
+      <svg viewBox="0 0 64 64" aria-hidden="true" style={{ width: size * 0.62, height: size * 0.62 }}>
+        <path d="M40.5 22.5a13 13 0 1 0 0 19" fill="none" stroke="#fff" strokeWidth="7" strokeLinecap="round" />
+        <circle cx="44" cy="32" r="4.2" fill="#fff" />
       </svg>
     </span>
   );

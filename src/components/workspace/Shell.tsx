@@ -19,7 +19,7 @@ export function Avatar({ user, size = 34 }: { user: Pick<PublicUser, "name" | "a
     .slice(0, 2)
     .toUpperCase();
   return (
-    <span className="avatar" style={{ width: size, height: size, fontSize: size * 0.4 }}>
+    <span className="avatar" style={{ background: user.avatarColor, width: size, height: size, fontSize: size * 0.4 }}>
       {initials || "?"}
     </span>
   );
@@ -50,51 +50,9 @@ export function Shell({ user, appCount, templateCount, children }: { user: Publi
     { href: "/explore", label: "Explore", icon: <Compass size={19} /> },
   ];
   const active = (href: string) => pathname === href || pathname.startsWith(href + "/");
-  const signInHref = `/auth?next=${encodeURIComponent(pathname)}`;
-  const accountItems = [
-    { label: "Settings", icon: <Settings size={15} />, onClick: () => (window.location.href = "/settings") },
-    "sep" as const,
-    { label: "Sign out", icon: <LogOut size={15} />, onClick: () => void signOut(), danger: true },
-  ];
-  const colorMode = (className: string) => (
-    <div className={`segmented ${className}`} role="group" aria-label="Color mode">
-      <button aria-pressed={mode === "light"} onClick={() => setMode("light")} title="Light" aria-label="Light">
-        <Sun size={14} />
-      </button>
-      <button aria-pressed={mode === "dark"} onClick={() => setMode("dark")} title="Dark" aria-label="Dark">
-        <Moon size={14} />
-      </button>
-      <button aria-pressed={mode === "system"} onClick={() => setMode("system")} title="Match my device" aria-label="Match my device">
-        <Monitor size={14} />
-      </button>
-    </div>
-  );
 
   return (
     <div className="workspace">
-      {/* computers: a menu bar across the desk; phones keep the compact header below */}
-      <header className="menubar ws-menubar">
-        <Logo href={user ? "/apps" : "/"} />
-        <div className="menubar-actions">
-          {colorMode("ws-color-mode")}
-          {user ? (
-            <Dropdown
-              trigger={
-                <button className="menubar-account" aria-label="Account menu">
-                  <Avatar user={user} size={28} />
-                  <span>{user.name}</span>
-                </button>
-              }
-              placement="bottom-end"
-              items={accountItems}
-            />
-          ) : (
-            <Link className="btn primary sm" href={signInHref}>
-              Sign in
-            </Link>
-          )}
-        </div>
-      </header>
       {open && <div className="sidebar-scrim" onClick={() => setOpen(false)} />}
       <aside ref={drawerRef} id="workspace-navigation" tabIndex={-1} inert={mobile && !open} role={mobile && open ? "dialog" : undefined} aria-modal={mobile && open ? true : undefined} aria-label="Workspace navigation" className={`sidebar ${open ? "open" : ""}`}>
         <div className="sidebar-logo">
@@ -103,7 +61,7 @@ export function Shell({ user, appCount, templateCount, children }: { user: Publi
             <X size={20} />
           </button>
         </div>
-        <div className="nav-caption">Workspace</div>
+        <div className="nav-caption">WORKSPACE</div>
         <nav className="side-nav">
           {nav.map((n) => (
             <Link key={n.href} href={n.href} className={active(n.href) ? "active" : ""}>
@@ -126,7 +84,17 @@ export function Shell({ user, appCount, templateCount, children }: { user: Publi
               </Link>
             )}
           </nav>
-          {colorMode("full side-color-mode")}
+          <div className="segmented full" role="group" aria-label="Color mode">
+            <button aria-pressed={mode === "light"} onClick={() => setMode("light")} title="Light">
+              <Sun size={14} />
+            </button>
+            <button aria-pressed={mode === "dark"} onClick={() => setMode("dark")} title="Dark">
+              <Moon size={14} />
+            </button>
+            <button aria-pressed={mode === "system"} onClick={() => setMode("system")} title="Match my device">
+              <Monitor size={14} />
+            </button>
+          </div>
           <div className="side-legal">
             <Link href="/terms">Terms</Link> · <Link href="/privacy">Privacy</Link> · <Link href="/report">Report</Link>
           </div>
@@ -144,19 +112,23 @@ export function Shell({ user, appCount, templateCount, children }: { user: Publi
                   </button>
                 }
                 placement="top-end"
-                items={accountItems}
+                items={[
+                  { label: "Settings", icon: <Settings size={15} />, onClick: () => (window.location.href = "/settings") },
+                  "sep",
+                  { label: "Sign out", icon: <LogOut size={15} />, onClick: () => void signOut(), danger: true },
+                ]}
               />
             </div>
           ) : (
             <div className="account-row">
-              <span className="avatar">
+              <span className="avatar" style={{ background: "var(--accent-grad)" }}>
                 <LogIn size={16} />
               </span>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <strong>Your workspace</strong>
                 <small>Sign in to start building</small>
               </div>
-              <Link className="btn primary sm" href={signInHref}>
+              <Link className="btn primary sm" href={`/auth?next=${encodeURIComponent(pathname)}`}>
                 Sign in
               </Link>
             </div>

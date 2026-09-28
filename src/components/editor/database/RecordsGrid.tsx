@@ -186,7 +186,7 @@ export function RecordsGrid(props: Props) {
             {columns.map(({ f, w }) => (
               <th key={f.id} style={{ width: w, minWidth: w, maxWidth: w }}>
                 <div className="th-inner" onClick={(e) => setHeaderMenu({ field: f, anchor: e.currentTarget })} title={`${f.name} · ${FIELD_TYPE_MAP[f.type].label}${f.required ? " · required" : ""}`}>
-                  <span className="field-type-chip">
+                  <span className="field-type-chip" style={{ background: `${FIELD_TYPE_MAP[f.type].color}22`, color: FIELD_TYPE_MAP[f.type].color }}>
                     <Icon name={FIELD_TYPE_MAP[f.type].icon} size={12} />
                   </span>
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</span>

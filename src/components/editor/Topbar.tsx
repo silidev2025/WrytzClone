@@ -30,7 +30,7 @@ import { api, errorMessage } from "@/lib/client/api";
 import { relativeTime } from "@/lib/shared/util";
 import { Dropdown, type MenuEntry } from "@/components/ui/Popover";
 import { toast } from "@/components/ui/toast";
-import { addPage, ed, getPage, peerPattern, redo, setPage, undo, useEditor, type Peer } from "./store";
+import { addPage, ed, getPage, redo, setPage, undo, useEditor, type Peer } from "./store";
 import { saveNow } from "./saving";
 
 function SaveStatus() {
@@ -109,7 +109,7 @@ function Collaborators() {
         const page = pages.find((x) => x.id === p.pageId)?.name;
         const where = p.view === "database" ? "in the database" : page ? `on ${page}` : "";
         return (
-          <button key={p.userId} className={`peer-avatar peer-${peerPattern(p.userId)}`} title={`${p.name}${where ? ` — ${where}` : ""}. Click to go there.`} aria-label={`${p.name}${where ? `, ${where}` : ""}. Go there.`} onClick={() => follow(p)}>
+          <button key={p.userId} className="peer-avatar" style={{ background: p.color }} title={`${p.name}${where ? ` — ${where}` : ""}. Click to go there.`} aria-label={`${p.name}${where ? `, ${where}` : ""}. Go there.`} onClick={() => follow(p)}>
             {initials(p.name)}
           </button>
         );
@@ -197,7 +197,7 @@ export function Topbar({ onPreview, onPublish, onVersions, onShortcuts, onShare 
         <Link href="/apps" className="icon-btn" aria-label="Back to my apps" title="Back to my apps">
           <ArrowLeft size={18} />
         </Link>
-        <span className="app-icon sm">
+        <span className="app-icon sm" style={{ background: `${app.color}24` }}>
           {app.emoji}
         </span>
         <AppName />

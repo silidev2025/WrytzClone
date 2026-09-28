@@ -32,13 +32,13 @@ export function DataPanel() {
           </div>
         )}
         {collections.map((c) => (
-          <button key={c.id} className="page-row collection-row" onClick={() => open(c.id)}>
+          <button key={c.id} className="page-row" style={{ width: "100%", border: "1px solid var(--line)", marginBottom: 6, background: "var(--panel)", textAlign: "left" }} onClick={() => open(c.id)}>
             <span style={{ fontSize: 18 }}>{c.icon || "🗂️"}</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="p-name">{c.name}</div>
               <div style={{ display: "flex", gap: 3, marginTop: 3, flexWrap: "wrap" }}>
                 {c.fields.slice(0, 6).map((f) => (
-                  <span key={f.id} className="field-type-chip" title={f.name}>
+                  <span key={f.id} className="field-type-chip" title={f.name} style={{ background: `${FIELD_TYPE_MAP[f.type].color}1f`, color: FIELD_TYPE_MAP[f.type].color }}>
                     <Icon name={FIELD_TYPE_MAP[f.type].icon} size={11} />
                   </span>
                 ))}

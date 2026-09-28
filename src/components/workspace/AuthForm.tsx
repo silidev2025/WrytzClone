@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowRight, CircleAlert, Database, Eye, EyeOff, Info, Palette, Rocket } from "lucide-react";
+import { ArrowRight, CircleAlert, Eye, EyeOff, Info } from "lucide-react";
 import { BRAND } from "@/lib/shared/brand";
 import { LEGAL } from "@/lib/shared/legal";
 import { api, errorMessage } from "@/lib/client/api";
@@ -52,22 +52,16 @@ export function AuthForm({ initialMode, next, app }: { initialMode: "signin" | "
           <p>Drag and drop your screens like in Canva, fine-tune them like in Figma, and keep your app&apos;s data in a built-in database.</p>
         </div>
         <div className="auth-floats" aria-hidden="true">
-          <div className="float-card" style={{ left: 0, top: 0 }}>
-            <strong>
-              <Palette size={16} /> Design
-            </strong>
+          <div className="float-card" style={{ left: 0, top: 30 }}>
+            <strong>🎨 Design</strong>
             Drag, snap, style and animate
           </div>
-          <div className="float-card" style={{ left: 244, top: 42 }}>
-            <strong>
-              <Database size={16} /> Database
-            </strong>
+          <div className="float-card" style={{ left: 190, top: 0, animationDelay: "1.2s" }}>
+            <strong>🗂️ Database</strong>
             Collections, fields &amp; records
           </div>
-          <div className="float-card" style={{ left: 96, top: 122 }}>
-            <strong>
-              <Rocket size={16} /> Publish
-            </strong>
+          <div className="float-card" style={{ left: 90, top: 130, animationDelay: "2.4s" }}>
+            <strong>🚀 Publish</strong>
             Share a real link in one click
           </div>
         </div>

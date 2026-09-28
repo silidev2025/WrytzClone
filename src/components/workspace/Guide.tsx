@@ -49,6 +49,7 @@ export function Guide() {
       <div className="crumbs">Workspace / User guide</div>
       <div className="page-head">
         <div>
+          <div className="eyebrow">User guide</div>
           <h1 className="page-title">Build with confidence.</h1>
           <p className="page-sub">Short, step-by-step answers for everything in the editor. Search for a word to jump straight to it.</p>
         </div>
@@ -78,7 +79,7 @@ export function Guide() {
                   <h3>{rich(t.title, term)}</h3>
                   <div className="g-sub">{rich(t.sub, term)}</div>
                 </span>
-                <ChevronDown size={18} style={{ transform: isOpen ? "rotate(180deg)" : undefined, transition: "transform .12s" }} />
+                <ChevronDown size={18} style={{ transform: isOpen ? "rotate(180deg)" : undefined, transition: "transform .2s", color: "var(--muted)" }} />
               </button>
               {isOpen && (
                 <div className="guide-body">

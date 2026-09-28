@@ -9,7 +9,7 @@ import { Modal } from "@/components/ui/Modal";
 import { toast } from "@/components/ui/toast";
 import { confirmDialog } from "@/components/ui/confirm";
 import { Avatar } from "@/components/workspace/Shell";
-import { peerPattern, useEditor } from "../store";
+import { useEditor } from "../store";
 
 type Role = "editor" | "admin";
 interface People {
@@ -73,8 +73,8 @@ export function ShareDialog({ open, onClose }: { open: boolean; onClose: () => v
   };
 
   // one row per person here now (they may have several tabs open)
-  const here = new Map<string, { name: string }>();
-  for (const p of Object.values(peers)) here.set(p.userId, { name: p.name });
+  const here = new Map<string, { name: string; color: string }>();
+  for (const p of Object.values(peers)) here.set(p.userId, { name: p.name, color: p.color });
 
   return (
     <Modal
@@ -83,7 +83,7 @@ export function ShareDialog({ open, onClose }: { open: boolean; onClose: () => v
       size="wide"
       className="share-dialog"
       icon={
-        <span className="empty-icon">
+        <span className="empty-icon" style={{ width: 44, height: 44, borderRadius: 13, background: "var(--accent-grad)", color: "#fff" }}>
           <Users size={20} />
         </span>
       }
@@ -105,7 +105,7 @@ export function ShareDialog({ open, onClose }: { open: boolean; onClose: () => v
             .filter(([userId]) => userId !== me.id)
             .map(([userId, p]) => (
               <span key={userId} className="share-person">
-                <span className={`avatar sm peer-${peerPattern(userId)}`}>
+                <span className="avatar" style={{ background: p.color, width: 26, height: 26, fontSize: 11 }}>
                   {p.name.slice(0, 1).toUpperCase()}
                 </span>
                 {p.name}

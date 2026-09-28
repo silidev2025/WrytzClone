@@ -96,7 +96,7 @@ export function FieldEditor({
         <div className="field-type-grid">
           {FIELD_TYPES.map((t) => (
             <button key={t.type} aria-pressed={type === t.type} onClick={() => set({ type: t.type })} title={t.hint}>
-              <span className="field-type-chip">
+              <span className="field-type-chip" style={{ background: `${t.color}22`, color: t.color }}>
                 <Icon name={t.icon} size={13} />
               </span>
               <span style={{ display: "grid" }}>

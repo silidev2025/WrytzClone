@@ -42,7 +42,7 @@ function SharedWithYou({ apps }: { apps: SharedApp[] }) {
           const href = a.role === "editor" ? `/editor/${a.id}` : a.slug ? appUrl(a.slug) : null;
           const body = (
             <>
-              <span className="app-icon">
+              <span className="app-icon" style={{ background: `${a.color}1f` }}>
                 {a.emoji}
               </span>
               <span className="shared-meta">
@@ -72,7 +72,7 @@ function SharedWithYou({ apps }: { apps: SharedApp[] }) {
 export function AppCard({ app, onRename, onDuplicate, onDelete }: { app: AppListItem; onRename: () => void; onDuplicate: () => void; onDelete: () => void }) {
   const router = useRouter();
   return (
-    <div className="app-card" data-depth={Math.min(3, Math.max(1, app.pageCount || 1))}>
+    <div className="app-card">
       <div
         className="app-thumb clickable"
         role="link"
@@ -84,18 +84,18 @@ export function AppCard({ app, onRename, onDuplicate, onDelete }: { app: AppList
         {app.preview ? (
           <MiniPreview preview={app.preview} />
         ) : (
-          <div className="thumb-fallback">
+          <div className="thumb-fallback" style={{ background: `${app.color}22` }}>
             {app.emoji}
           </div>
         )}
       </div>
       {app.published && (
         <span className="corner badge success" title={`Live at ${appUrl(app.published.slug)}`}>
-          Live
+          ● Live
         </span>
       )}
       <div className="app-card-body">
-        <span className="app-icon">
+        <span className="app-icon" style={{ background: `${app.color}1f` }}>
           {app.emoji}
         </span>
         <div className="app-card-meta">
@@ -195,9 +195,9 @@ export function MyApps({ initialApps, userName, templates, shared = [] }: { init
 
   return (
     <div className="page">
-      <div className="crumbs">Workspace / My apps</div>
       <div className="page-head">
         <div>
+          <div className="eyebrow">Your workspace</div>
           <h1 className="page-title">Hi {first}, what are we building today?</h1>
           <p className="page-sub">Design screens visually, connect a database, and share a working app — no code needed.</p>
         </div>
@@ -231,14 +231,14 @@ export function MyApps({ initialApps, userName, templates, shared = [] }: { init
             onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setCreating(t.id))}
           >
             <div className="quick-thumb">{t.preview ? <MiniPreview preview={t.preview} /> : <span>{t.emoji}</span>}</div>
-            <strong>{t.name}</strong>
+            <strong>
+              {t.emoji} {t.name}
+            </strong>
             <small>{t.tagline}</small>
           </div>
         ))}
         <Link className="quick-tile more" href="/templates">
-          <span className="quick-plus">
-            <Sparkles size={22} />
-          </span>
+          <Sparkles size={20} />
           <strong>More templates</strong>
           <small>Browse every starter</small>
         </Link>

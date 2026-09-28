@@ -57,13 +57,6 @@ export interface Peer {
 
 export type LiveStatus = "connecting" | "live" | "offline";
 
-/** Which of the six one-bit peer styles (solid, outlined, ringed, dashed, dotted, double) a person gets. */
-export function peerPattern(userId: string): number {
-  let h = 0;
-  for (const c of userId) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return h % 6;
-}
-
 interface ClipboardData {
   els: El[];
 }

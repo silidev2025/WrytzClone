@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Maximize, Minus, Plus } from "lucide-react";
-import { ed, getPage, peerPattern, useEditor } from "../store";
+import { ed, getPage, useEditor } from "../store";
 import { elFrameBox, frameNode } from "./Canvas";
 
 /* ------------------------------------------------------------------ collaborators */
@@ -10,7 +10,7 @@ import { elFrameBox, frameNode } from "./Canvas";
 interface PeerView {
   clientId: string;
   name: string;
-  pattern: number;
+  color: string;
   boxes: { id: string; x: number; y: number; w: number; h: number }[];
   cursor: { x: number; y: number } | null;
 }
@@ -48,7 +48,7 @@ export function PeersOverlay({ viewportRef, hostRef }: { viewportRef: RefObject<
             if (fb) boxes.push({ id, x: Math.round(ox + fb.x * z), y: Math.round(oy + fb.y * z), w: Math.round(fb.w * z), h: Math.round(fb.h * z) });
           }
           const cursor = p.cursor ? { x: Math.round(ox + p.cursor.x * z), y: Math.round(oy + p.cursor.y * z) } : null;
-          if (boxes.length || cursor) out.push({ clientId: p.clientId, name: p.name, pattern: peerPattern(p.userId), boxes, cursor });
+          if (boxes.length || cursor) out.push({ clientId: p.clientId, name: p.name, color: p.color, boxes, cursor });
         }
       }
       const key = JSON.stringify(out);
@@ -68,9 +68,9 @@ export function PeersOverlay({ viewportRef, hostRef }: { viewportRef: RefObject<
       {views.map((v) => (
         <div key={v.clientId}>
           {v.boxes.map((b, i) => (
-            <div key={b.id} className={`peer-sel peer-line-${v.pattern}`} style={{ left: b.x, top: b.y, width: b.w, height: b.h }}>
+            <div key={b.id} className="peer-sel" style={{ left: b.x, top: b.y, width: b.w, height: b.h, borderColor: v.color }}>
               {i === 0 && (
-                <span className="peer-tag">
+                <span className="peer-tag" style={{ background: v.color }}>
                   {v.name}
                 </span>
               )}
@@ -79,9 +79,9 @@ export function PeersOverlay({ viewportRef, hostRef }: { viewportRef: RefObject<
           {v.cursor && (
             <div className="peer-cursor" style={{ transform: `translate(${v.cursor.x}px, ${v.cursor.y}px)` }}>
               <svg width="18" height="20" viewBox="0 0 18 20">
-                <path d="M1 1 L1 16 L5.5 12 L8.5 19 L11.5 17.6 L8.6 11 L14.5 11 Z" style={{ fill: "var(--ink)", stroke: "var(--paper)" }} strokeWidth="1.6" strokeLinejoin="round" />
+                <path d="M1 1 L1 16 L5.5 12 L8.5 19 L11.5 17.6 L8.6 11 L14.5 11 Z" fill={v.color} stroke="#fff" strokeWidth="1.4" strokeLinejoin="round" />
               </svg>
-              <span className="peer-tag">
+              <span className="peer-tag" style={{ background: v.color }}>
                 {v.name}
               </span>
             </div>
