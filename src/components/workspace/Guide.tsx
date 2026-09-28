@@ -49,7 +49,6 @@ export function Guide() {
       <div className="crumbs">Workspace / User guide</div>
       <div className="page-head">
         <div>
-          <div className="eyebrow">User guide</div>
           <h1 className="page-title">Build with confidence.</h1>
           <p className="page-sub">Short, step-by-step answers for everything in the editor. Search for a word to jump straight to it.</p>
         </div>

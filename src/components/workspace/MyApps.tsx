@@ -238,7 +238,9 @@ export function MyApps({ initialApps, userName, templates, shared = [] }: { init
           </div>
         ))}
         <Link className="quick-tile more" href="/templates">
-          <Sparkles size={20} />
+          <span className="quick-plus">
+            <Sparkles size={20} />
+          </span>
           <strong>More templates</strong>
           <small>Browse every starter</small>
         </Link>

@@ -24,12 +24,15 @@ function VisitsChart({ daily }: { daily: AppMeta["stats"]["daily"] }) {
   }
   const max = Math.max(1, ...days.map((x) => x.v));
   return (
-    <svg viewBox="0 0 300 60" style={{ width: "100%", height: 60 }} role="img" aria-label="Visits over the last 30 days">
-      {days.map((x, i) => (
-        <rect key={x.d} x={i * 10 + 1} y={58 - (x.v / max) * 54} width={8} height={Math.max(1, (x.v / max) * 54)} rx={2} fill="var(--brand)" opacity={x.v ? 0.85 : 0.18}>
-          <title>{`${x.d}: ${x.v} visits, ${x.s} submissions`}</title>
-        </rect>
-      ))}
+    <svg viewBox="0 0 300 60" preserveAspectRatio="none" style={{ width: "100%", height: 60 }} role="img" aria-label="Visits over the last 30 days">
+      <line x1={0} x2={300} y1={59.5} y2={59.5} stroke="var(--line)" strokeWidth={1} />
+      {days.map((x, i) =>
+        x.v ? (
+          <rect key={x.d} x={i * 10 + 1} y={59 - (x.v / max) * 54} width={8} height={(x.v / max) * 54} rx={2} fill="var(--brand)">
+            <title>{`${x.d}: ${x.v} visits, ${x.s} submissions`}</title>
+          </rect>
+        ) : null,
+      )}
     </svg>
   );
 }
@@ -168,13 +171,14 @@ export function PublishDialog({ open, onClose }: { open: boolean; onClose: () =>
             </a>
           </div>
           {outdated && <div className="alert info">You have changes that aren&apos;t live yet. Click “Publish update”.</div>}
-          <div style={{ display: "flex", gap: 18, fontSize: 13 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 18, fontSize: 13, color: "var(--muted)" }}>
             <span>
-              <strong>{meta.stats.visits}</strong> visits
+              <strong style={{ color: "var(--ink)", fontVariantNumeric: "tabular-nums" }}>{meta.stats.visits}</strong> visits
             </span>
             <span>
-              <strong>{meta.stats.submissions}</strong> submissions
+              <strong style={{ color: "var(--ink)", fontVariantNumeric: "tabular-nums" }}>{meta.stats.submissions}</strong> submissions
             </span>
+            <span style={{ marginLeft: "auto", fontSize: 12 }}>Last 30 days</span>
           </div>
           <VisitsChart daily={meta.stats.daily} />
         </div>

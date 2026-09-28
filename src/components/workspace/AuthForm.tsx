@@ -52,15 +52,15 @@ export function AuthForm({ initialMode, next, app }: { initialMode: "signin" | "
           <p>Drag and drop your screens like in Canva, fine-tune them like in Figma, and keep your app&apos;s data in a built-in database.</p>
         </div>
         <div className="auth-floats" aria-hidden="true">
-          <div className="float-card" style={{ left: 0, top: 30 }}>
+          <div className="float-card" style={{ left: 0, top: 0 }}>
             <strong>🎨 Design</strong>
             Drag, snap, style and animate
           </div>
-          <div className="float-card" style={{ left: 190, top: 0, animationDelay: "1.2s" }}>
+          <div className="float-card" style={{ left: 244, top: 44 }}>
             <strong>🗂️ Database</strong>
             Collections, fields &amp; records
           </div>
-          <div className="float-card" style={{ left: 90, top: 130, animationDelay: "2.4s" }}>
+          <div className="float-card" style={{ left: 96, top: 124 }}>
             <strong>🚀 Publish</strong>
             Share a real link in one click
           </div>
